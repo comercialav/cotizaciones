@@ -38,3 +38,7 @@ env:
     availability: [RUNTIME]
   - variable: SLACK_BOT_TOKEN
     secret: SLACK_BOT_TOKEN
+
+  - variable: NITRO_PRESET
+    value: node-server
+    availability: [BUILD, RUNTIME]
