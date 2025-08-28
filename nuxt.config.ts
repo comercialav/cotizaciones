@@ -3,6 +3,9 @@ import vuetify from 'vite-plugin-vuetify';
 export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
+  nitro: {
+    preset: 'node-server',   // <-- importante para App Hosting
+  },
   modules: [
     '@nuxt/icon',
     '@pinia/nuxt'
