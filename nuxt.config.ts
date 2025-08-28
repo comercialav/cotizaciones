@@ -3,6 +3,10 @@ import vuetify from 'vite-plugin-vuetify';
 export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
+  nitro: {
+    preset: 'firebase',
+    firebase: { gen: 2 }
+  },
   modules: [
     '@nuxt/icon',
     '@pinia/nuxt'
@@ -16,12 +20,13 @@ export default defineNuxtConfig({
     plugins: [ vuetify() ]
   },
   runtimeConfig: {
-    mailHost: process.env.MAIL_HOST || "smtp.ionos.es",
-    mailPort: process.env.MAIL_PORT || "465",
-    mailUser: process.env.MAIL_USER || "cotizaciones@comercialav.com",
-    mailPass: process.env.MAIL_PASS || "8S#kfaT@F&hMW",
-    mailFrom: process.env.MAIL_FROM || "cotizaciones@comercialav.com",
-    mailSecure: "true", // true en 465, false en 587
+    mailHost: process.env.MAIL_HOST,
+    mailPort: process.env.MAIL_PORT ?? '465',
+    mailUser: process.env.MAIL_USER,
+    mailPass: process.env.MAIL_PASS,
+    mailFrom: process.env.MAIL_FROM ?? process.env.MAIL_USER,
+    mailSecure: 'true',
+    slackToken: process.env.SLACK_BOT_TOKEN,
     public: {
       firebaseApiKey: process.env.FIREBASE_API_KEY || '',
       firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN || '',
