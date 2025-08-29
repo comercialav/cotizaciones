@@ -6,19 +6,19 @@ const user = useUserStore()
 
 <template>
   <div>
-    <!-- LOADER mientras carga Firebase -->
     <div v-if="user.loading" class="splash-loader">
       <div class="loader-circle">
         <img src="/logo.png" alt="Logo Comercial AV" class="logo" />
       </div>
     </div>
 
-    <!-- App normal cuando ya terminó de cargar -->
+    <!-- App normal -->
     <NuxtLayout v-else>
       <NuxtPage />
     </NuxtLayout>
   </div>
 </template>
+
 
 <style scoped>
 .splash-loader {
