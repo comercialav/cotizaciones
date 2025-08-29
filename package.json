@@ -10,7 +10,7 @@
     "prebuild": "rimraf .nuxt .output",
     "build": "cross-env NITRO_PRESET=node-server nuxt build",
     "dev": "nuxt dev",
-    "start": "cross-env NODE_ENV=production NITRO_HOST=0.0.0.0 NITRO_PORT=8080 node .output/server/index.mjs",
+    "start": "node .output/server/index.mjs",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare"
