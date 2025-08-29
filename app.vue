@@ -5,19 +5,19 @@ const user = useUserStore()
 </script>
 
 <template>
-  <div>
+  <v-app>
+    <NuxtLayout>
+      <NuxtPage />
+    </NuxtLayout>
+
     <div v-if="user.loading" class="splash-loader">
       <div class="loader-circle">
         <img src="/logo.png" alt="Logo Comercial AV" class="logo" />
       </div>
     </div>
-
-    <!-- App normal -->
-    <NuxtLayout v-else>
-      <NuxtPage />
-    </NuxtLayout>
-  </div>
+  </v-app>
 </template>
+
 
 
 <style scoped>
