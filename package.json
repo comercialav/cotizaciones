@@ -7,7 +7,8 @@
   },
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "build": "nuxt build",
+    "prebuild": "rimraf .nuxt .output",
+    "build": "cross-env NITRO_PRESET=node-server nuxt build",
     "dev": "nuxt dev",
     "start": "cross-env NODE_ENV=production NITRO_HOST=0.0.0.0 NITRO_PORT=8080 node .output/server/index.mjs",
     "generate": "nuxt generate",
@@ -19,8 +20,6 @@
     "@pinia/nuxt": "^0.11.0",
     "apexcharts": "^5.3.3",
     "firebase": "^11.6.0",
-    "firebase-admin": "^11.0.0",
-    "firebase-functions": "^5.0.0",
     "nodemailer": "^7.0.5",
     "nuxt": "^3.16.2",
     "vite-plugin-vuetify": "^2.1.1",
@@ -33,6 +32,7 @@
     "protobufjs": "7.2.5"
   },
   "devDependencies": {
-    "cross-env": "^10.0.0"
+    "cross-env": "^10.0.0",
+    "rimraf": "^6.0.1"
   }
 }
