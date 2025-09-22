@@ -5,11 +5,11 @@ import {
   collection, doc, onSnapshot, addDoc, updateDoc, getDocs, query, where, serverTimestamp
 } from 'firebase/firestore'
 import { useUserStore } from '~/stores/user'
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage"
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 definePageMeta({ middleware: ['role-comercial'] })
 
-const { $db } = useNuxtApp()
+const { $db, $storage, $auth } = useNuxtApp()
 const route = useRoute()
 const user = useUserStore()
 
@@ -18,28 +18,21 @@ const loading = ref(true)
 const cot = ref<any | null>(null)
 const comments = ref<any[]>([])
 const newComment = ref('')
-
-const storage = getStorage() // usa tu bucket por defecto
 const fileToUpload = ref<File|null>(null)
 
 const SUPERVISOR_ROLE = 'jefe_comercial'
 const supervisorEmail = ref<string|null>(null)
 
 async function loadSupervisor() {
-  // Busca por rol ó por flag
-  const q1 = query(collection($db, 'Usuarios'), where('rol', '==', SUPERVISOR_ROLE))
+  const q1 = query(collection($db, 'usuarios'), where('rol', '==', SUPERVISOR_ROLE))
   const s1 = await getDocs(q1)
-  if (s1.docs.length) {
-    supervisorEmail.value = s1.docs[0].data().email || null
-    return
-  }
-  // fallback por flag booleano
-  const q2 = query(collection($db, 'Usuarios'), where('esSupervisor', '==', true))
+  if (s1.docs.length) { supervisorEmail.value = s1.docs[0].data().email || null; return }
+
+  const q2 = query(collection($db, 'usuarios'), where('esSupervisor', '==', true))
   const s2 = await getDocs(q2)
-  supervisorEmail.value = s2.docs[0]?.data()?.email || null
+  supervisorEmail.value = s2.docs[0]?.data()?.email || 'vanessa@comercialav.com'
 }
 
-// Reasignación
 const showReassign = ref(false)
 const comerciales = ref<any[]>([])
 const seleccionado = ref<any|null>(null)
@@ -65,7 +58,7 @@ function initials(name: string) {
   if (!name) return '—'
   return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('')
 }
-function colorByRol(rol?: string, nombre?: string) {
+function colorByRol(rol?: string) {
   const rn = (rol || '').toLowerCase()
   if (rn === 'comercial') return 'primary'
   if (rn === 'admin') return 'indigo'
@@ -84,24 +77,13 @@ function sumLineas(art:any[], field:'precioCliente'|'precioCotizado'){
 }
 function getCounterpartyEmail(): string | null {
   const role = (user.rol || '').toLowerCase()
-
-  // Si quien escribe es la supervisora -> avisar al vendedor de la cotización
-  const isSupervisor = role === SUPERVISOR_ROLE || role.includes('vanes') || (user as any).esSupervisor === true
-  if (isSupervisor) {
-    return cot.value?.vendedor?.email || null
-  }
-
-  // Si quien escribe es un comercial (o el propio vendedor) -> avisar a la supervisora
-  if (role === 'comercial' || user.uid === cot.value?.vendedor?.uid) {
-    return supervisorEmail.value
-  }
-
-  // Otros roles: por defecto, si hay vendedor asignado, avísale; si no, a la supervisora
+  const isSup = role === SUPERVISOR_ROLE || role.includes('vanes') || (user as any).esSupervisor === true
+  if (isSup) return cot.value?.vendedor?.email || null
+  if (role === 'comercial' || user.uid === cot.value?.vendedor?.uid) return supervisorEmail.value
   return cot.value?.vendedor?.email || supervisorEmail.value || null
 }
 const totalCotizado = computed(() => sumLineas(cot.value?.articulos || [], 'precioCliente'))
 
-// Permisos
 const isSupervisor = computed(() => {
   const r = (user.rol || '').toLowerCase()
   return r === 'admin' || r === 'jefe_comercial' || r.includes('vanes')
@@ -111,6 +93,13 @@ const puedeAccionar = computed(() => isSupervisor.value)
 function canSet(flow: 'en_revision'|'consultando'|'espera_cliente') {
   if (flow === 'espera_cliente') return Boolean(isOwner.value || isSupervisor.value)
   return Boolean(isSupervisor.value)
+}
+
+// ---- helpers auth para Storage ----
+async function ensureAuth() {
+  if ($auth.currentUser) return
+  const { signInAnonymously } = await import('firebase/auth')
+  await signInAnonymously($auth)
 }
 
 // Snapshots
@@ -135,31 +124,27 @@ onUnmounted(() => { stopDoc?.(); stopComments?.() })
 async function notifySlack(text: string, toEmailOverride?: string | null) {
   try {
     const toEmail = toEmailOverride || getCounterpartyEmail()
-    if (!toEmail) return
-    await $fetch('/api/slack/dm', {
-      method: 'POST',
-      body: { toEmail, text }
-    })
+    if (!toEmail) { console.warn('Slack: sin destinatario'); return }
+    await $fetch('/api/slack/dm', { method:'POST', body:{ toEmail, text } })
   } catch (e:any) {
     console.error('Slack DM error:', e?.data || e)
   }
 }
-// Acciones
+
+// ===== Acciones =====
 async function addComment() {
   const texto = newComment.value.trim()
   if (!texto && !fileToUpload.value) return
 
   let attachment = null
   if (fileToUpload.value) {
+    if (import.meta.server) return
+    await ensureAuth()
     const path = `cotizaciones/${id.value}/attachments/${Date.now()}_${fileToUpload.value.name}`
-    const fileRef = storageRef(storage, path)
+    const fileRef = storageRef($storage, path)
     await uploadBytes(fileRef, fileToUpload.value)
     const url = await getDownloadURL(fileRef)
-    attachment = {
-      nombre: fileToUpload.value.name,
-      url,
-      tipo: fileToUpload.value.type
-    }
+    attachment = { nombre: fileToUpload.value.name, url, tipo: fileToUpload.value.type }
   }
 
   await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
@@ -173,70 +158,41 @@ async function addComment() {
   fileToUpload.value = null
   await updateDoc(doc($db, 'cotizaciones', id.value), { updatedAt: serverTimestamp() })
 
-  // Slack DM (privado a vendedor y CC opcional a Vanessa)
   await notifySlack(`💬 ${user.nombre} comentó en la cotización “${cot.value?.nombre || cot.value?.cliente || id.value}”: “${texto}”`)
 }
 
-// ===== Acciones con Slack =====
 async function setWorkflow(flow: 'en_revision'|'consultando'|'espera_cliente') {
   if (!cot.value) return
-
-  await updateDoc(doc($db, 'cotizaciones', id.value), {
-    workflow: flow,
-    updatedAt: serverTimestamp()
-  })
-
+  await updateDoc(doc($db, 'cotizaciones', id.value), { workflow: flow, updatedAt: serverTimestamp() })
   const msg = `🔄 ${user.nombre} cambió el estado de la cotización “${cot.value?.cliente || id.value}” a *${flow.replace('_',' ')}*.`
-
-  // Si lo cambia supervisor → avisar vendedor
-  if (isSupervisor.value) {
-    await notifySlack(msg, cot.value?.vendedor?.email)
-  }
-  // Si lo cambia comercial (solo puede "espera_cliente") → avisar supervisor
-  else if (flow === 'espera_cliente') {
-    await notifySlack(msg, supervisorEmail.value)
-  }
+  if (isSupervisor.value) await notifySlack(msg, cot.value?.vendedor?.email)
+  else if (flow === 'espera_cliente') await notifySlack(msg, supervisorEmail.value)
 }
 
 async function aceptar() {
   if (!cot.value) return
-
-  await updateDoc(doc($db, 'cotizaciones', id.value), {
-    estado: 'resuelta',
-    updatedAt: serverTimestamp()
-  })
-
+  await updateDoc(doc($db, 'cotizaciones', id.value), { estado: 'resuelta', updatedAt: serverTimestamp() })
   const msg = `✅ ${user.nombre} marcó la cotización “${cot.value?.cliente || id.value}” como *ACEPTADA*.`
-
-  // Notificar vendedor y supervisor
-  if (cot.value?.vendedor?.email) {
-    await notifySlack(msg, cot.value.vendedor.email)
-  }
-  if (supervisorEmail.value) {
-    await notifySlack(msg, supervisorEmail.value)
-  }
+  if (cot.value?.vendedor?.email) await notifySlack(msg, cot.value.vendedor.email)
+  if (supervisorEmail.value) await notifySlack(msg, supervisorEmail.value)
 }
 
 async function loadComerciales() {
   try {
     const qRef = query(collection($db, 'usuarios'), where('rol', 'in', ['comercial', 'Comercial']))
     const snap = await getDocs(qRef)
-
     const lista = snap.docs.map(d => {
       const data = d.data()
       return {
         id: d.id,
-        uid: data.uid || d.id,   // prefiero usar el campo uid si existe
-        nombre: data.nombre || data.displayName || data.email || "Sin nombre",
+        uid: data.uid || d.id,
+        nombre: data.nombre || data.displayName || data.email || 'Sin nombre',
         email: data.email || null,
         rol: data.rol || 'comercial'
       }
     })
-
     const actualUid = cot.value?.vendedor?.uid
     comerciales.value = lista.filter((u:any) => u.uid !== actualUid)
-
-    console.log("[reasignar] comerciales cargados:", comerciales.value)
   } catch (e) {
     console.error('[reasignar] Error cargando comerciales', e)
     comerciales.value = []
@@ -278,41 +234,30 @@ async function confirmarReasignacion() {
     author: { uid: user.uid, nombre: user.nombre, rol: user.rol }
   })
 
-  // Notificación Slack de reasignación (opcional)
   await notifySlack(`🔁 Cotización “${cot.value?.nombre || cot.value?.cliente || id.value}” reasignada a ${update.vendedor.nombre}`)
-
-
   showReassign.value = false
 }
 
 async function onFileChange(e:any) {
-  const f = e.target.files[0]
-  if (!f) return
-
-  // ruta en el bucket
+  const f = e.target.files?.[0]; if (!f) return
+  if (import.meta.server) return
+  await ensureAuth()
   const path = `cotizaciones/${id.value}/attachments/${Date.now()}_${f.name}`
-  const fileRef = storageRef(storage, path)
-
-  // subir archivo
+  const fileRef = storageRef($storage, path)
   await uploadBytes(fileRef, f)
-
-  // obtener URL pública
   const url = await getDownloadURL(fileRef)
 
-  // guardar como comentario con adjunto (sin texto)
   await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
     texto: null,
     attachment: { nombre: f.name, url, tipo: f.type },
     fecha: serverTimestamp(),
     author: { uid: user.uid, nombre: user.nombre, rol: user.rol }
   })
-
   await updateDoc(doc($db, 'cotizaciones', id.value), { updatedAt: serverTimestamp() })
-
-  // Slack DM (privado)
   await notifySlack(`📎 ${user.nombre} adjuntó “${f.name}” en la cotización “${cot.value?.nombre || cot.value?.cliente || id.value}”`)
 }
 </script>
+
 
 <template>
   <v-container class="py-6">

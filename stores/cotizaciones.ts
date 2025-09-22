@@ -40,7 +40,7 @@ export const useCotizacionesStore = defineStore("cotizaciones", {
       const user = useUserStore()
       if (!user.uid) throw new Error("No autenticado")
       if (!payload.cliente || !payload.tarifa) throw new Error("Cliente y tarifa son obligatorios")
-
+      console.log("Creando cotización...");
       this.saving = true
       try {
         const db = getFirestore()

@@ -3,6 +3,7 @@ import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getFunctions } from 'firebase/functions'
+import { getStorage } from 'firebase/storage'
 
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig().public
@@ -21,9 +22,11 @@ export default defineNuxtPlugin((nuxtApp) => {
   const auth = getAuth(firebaseApp)
   const db = getFirestore(firebaseApp)
   const funcs = getFunctions(firebaseApp)
+  const storage = getStorage(firebaseApp, 'gs://cotizaciones-786c7.firebasestorage.app')
 
   // Los inyectamos para usarlos en componentes/composables
   nuxtApp.provide('auth', auth)
   nuxtApp.provide('db', db)
   nuxtApp.provide('funcs', funcs)
+  nuxtApp.provide('storage', storage)
 })

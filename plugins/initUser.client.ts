@@ -1,7 +1,5 @@
-// plugins/initUser.client.ts
-import { useUserStore } from "~/stores/user"
-export default defineNuxtPlugin(() => {
+import { useUserStore } from '~/stores/user'
+export default defineNuxtPlugin(async () => {
   const user = useUserStore()
-  console.log("[initUser] Plugin cargado, inicializando usuario…")
-  user.initUser()
+  await user.initUser()   // importante: await
 })

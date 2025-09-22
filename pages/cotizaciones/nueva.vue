@@ -1,18 +1,31 @@
 <script setup lang="ts">
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
+import { useCotizacionesStore } from '~/stores/cotizaciones'
+const cot = useCotizacionesStore()
 
-async function guardarNueva(data: any) {
+async function guardarNueva(data:any){
   try {
-    const { $db } = useNuxtApp()   // <-- aquí recoges lo que inyectaste
-    await addDoc(collection($db, 'cotizaciones'), {
-      ...data,
-      estado: 'pendiente',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+    // mapear nombres del form -> payload del store
+    await cot.crearCotizacion({
+      cliente: data.cliente,
+      tarifa: data.tarifa,
+      articulos: data.articulos,
+      stockDisponible: data.stockDisponible ?? true,
+      compradoAntes: !!data.compradoAntes,
+      precioAnterior: data.precioAnterior ?? null,
+      fechaDecision: data.fechaDecision ?? null,
+      plazoEntrega: data.plazoEntrega || '',
+      lugarEntrega: data.lugarEntrega || '',
+      comentarioStock: data.comentarioStock || '',
+      licitacion: !!data.licitacion,
+      clienteFinal: data.clienteFinal || '',
+      precioCompet: data.precioCompet ?? null,
+      comentarios: data.comentariosCliente || '',
+      formaPagoSolicitada: data.formaPagoSolicitada || '',
     })
     navigateTo('/cotizaciones')
-  } catch (err) {
-    console.error('Error guardando cotización:', err)
+  } catch (e) {
+    console.error('[guardarNueva] error:', e)
   }
 }
 

@@ -6,6 +6,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const token = process.env.SLACK_BOT_TOKEN
+  console.log(token);
   if (!token) throw createError({ statusCode: 500, statusMessage: "Falta SLACK_BOT_TOKEN" })
 
   const base = "https://slack.com/api"
