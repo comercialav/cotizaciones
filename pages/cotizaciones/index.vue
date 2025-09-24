@@ -4,12 +4,14 @@ definePageMeta({
 })
 
 import { useUserStore } from '~/stores/user'
+import { useCotizacionesStore } from '~/stores/cotizaciones'
 import {
   collection, query, where, orderBy, limit, getDocs, startAfter, DocumentSnapshot
 } from 'firebase/firestore'
 
 const { $db } = useNuxtApp()
 const user = useUserStore()
+const store = useCotizacionesStore()
 
 // --- Roles / supervisor ---
 const SUPERVISOR_ROLE = 'jefe_comercial'
@@ -19,7 +21,6 @@ const isSupervisor = computed(() => {
   console.debug('[cotizaciones] rol:', r, 'esSupervisor?', ok, 'flag:', (user as any).esSupervisor)
   return ok
 })
-
 
 // --- Comerciales (para el select de la supervisora) ---
 const comerciales = ref<{ uid:string; nombre:string; email?:string }[]>([])
@@ -35,13 +36,11 @@ async function loadComerciales(){
       .map(d=>{
         const data = d.data() as any
         return {
-          // ⚠️ usar el UID real almacenado en el doc, no el id del doc
           uid: data.uid || null,
           nombre: data.nombre || data.displayName || 'Comercial',
           email: data.email || null
         }
       })
-      // solo comerciales que tengan uid válido (Auth UID)
       .filter(c => !!c.uid)
 
   }catch(e){
@@ -53,50 +52,45 @@ async function loadComerciales(){
 // UI
 const loading = ref(true)
 const search  = ref('')
-const status  = ref<'all' | 'pendiente' | 'resuelta' | 'reabierta'>('all')
+
+type FiltroClave = 'all' | 'Pendiente' | 'Reabiertas' | 'SinRevisar' | 'Cotizadas' | 'Ganadas' | 'Perdidas'
+const status  = ref<FiltroClave>('all')
+
 const page    = ref(1)
 const perPage = 9
 
-// Datos de la página actual
-const items   = ref<any[]>([])
+// Datos de la página actual (raw)
+const pageDocs = ref<any[]>([])
 
 const cursors = ref<(DocumentSnapshot | null)[]>([null]) // página 1 empieza sin cursor
-const hasMore = ref<boolean>(false) // si hay más páginas por delante
+const hasMore = ref<boolean>(false)
 const pageCount = computed(() => {
   const known = Math.max(1, cursors.value.length - 1)
   return hasMore.value ? known + 1 : known
 })
 
-// Helpers de UI
-const statusChip = (s: string) => {
-  const k = (s || 'pendiente').toLowerCase()
-  return {
-    text: k === 'resuelta' ? 'Resuelta' : k === 'reabierta' ? 'Reabierta' : 'Pendiente',
-    color: k === 'resuelta' ? 'success' : k === 'reabierta' ? 'primary' : 'warning'
-  }
-}
-const progressByEstado = (estado: string, workflow?: string) => {
-  const e = (estado || '').toLowerCase()
-  const w = (workflow || '').toLowerCase()
+// Helpers de UI derivados del store
+const chipTextFromFiltro = (f: 'Pendiente'|'Cotizadas'|'Ganadas'|'Perdidas') =>
+  f === 'Ganadas' ? 'Ganada' :
+  f === 'Perdidas' ? 'Perdida' :
+  f === 'Reabiertas' ? 'Reabierta' :
+  f === 'Cotizadas' ? 'Cotizada' : 'Pendiente'
+  
 
-  if (e === 'resuelta') return 100
-  if (w === 'en_revision') return 40
-  if (w === 'consultando') return 60
-  if (w === 'espera_cliente') return 80
-  if (e === 'reabierta') return 20
+// Lista filtrada desde el store sobre la página cargada
+const itemsFiltrados = computed(()=>{
+  if (status.value === 'all')        return store.lista
+  if (status.value === 'Pendiente')  return store.pendientes           // = Reabiertas + SinRevisar
+  if (status.value === 'Reabiertas') return store.reabiertas
+  if (status.value === 'SinRevisar') return store.sinRevisar
+  if (status.value === 'Cotizadas')  return store.cotizadas
+  if (status.value === 'Ganadas')    return store.ganadas
+  if (status.value === 'Perdidas')   return store.perdidas
+  return store.lista
+})
 
-  return 10 // pendiente inicial
-}
 
-const progressColor = (estado: string, workflow?: string) => {
-  const val = progressByEstado(estado, workflow)
-  if (val === 100) return 'success'
-  if (val >= 80) return 'secondary'
-  if (val >= 60) return 'info'
-  if (val >= 40) return 'warning'
-  if (val >= 20) return 'primary'
-  return 'grey'
-}
+// Totales
 const totalCotizado = (art: any[]) =>
   (art || []).reduce((a, r) => a + (Number(r.unidades) || 0) * (Number(r.precioCotizado) || 0), 0)
 const totalCliente = (art: any[]) =>
@@ -104,7 +98,7 @@ const totalCliente = (art: any[]) =>
 const initials = (name: string) =>
   (name || '—').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('')
 
-// Construye la query con filtros y cursor
+// Construye la query con filtros de ámbito y búsqueda (el filtrado de estado se hace en cliente)
 function buildQuery(forPage: number) {
   const base = collection($db, 'cotizaciones')
   const constraints: any[] = []
@@ -119,16 +113,6 @@ function buildQuery(forPage: number) {
       constraints.push(where('vendedor.uid','==','__none__'))
     } else {
       constraints.push(where('vendedor.uid','==', user.uid))
-    }
-  }
-
-  // --- Filtro por estado ---
-  if (status.value !== 'all') {
-    if (status.value === 'pendiente') {
-      // admite docs con estado == pendiente o estado sin definir (null)
-      constraints.push(where('estado','in',['pendiente', null]))
-    } else {
-      constraints.push(where('estado','==', status.value))
     }
   }
 
@@ -150,7 +134,6 @@ function buildQuery(forPage: number) {
   return query(base, ...constraints)
 }
 
-
 // Carga una página concreta
 async function loadPage(forPage: number) {
   loading.value = true
@@ -159,7 +142,10 @@ async function loadPage(forPage: number) {
     const snap = await getDocs(q)
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
 
-    items.value = docs
+    pageDocs.value = docs
+    // sincroniza con el store para que deriveUI actúe
+    store.items = docs
+
     hasMore.value = docs.length === perPage
     cursors.value[forPage + 1] = snap.docs[snap.docs.length - 1] || null
   } catch (e: any) {
@@ -171,7 +157,6 @@ async function loadPage(forPage: number) {
 
 // --- Esperar a que el userStore termine antes de la primera carga ---
 async function boot() {
-  // espera a que el store acabe de cargar
   if (user.loading) {
     await new Promise<void>((resolve)=>{
       const stop = watch(()=>user.loading, (v)=>{
@@ -199,14 +184,14 @@ watch([status, () => search.value.trim(), selectedComercialUid], () => {
   loadPage(1)
 })
 
-// Si cambia el rol o el uid (p. ej., al terminar de cargar el store) → recargar
+// Si cambia el rol o el uid → recargar
 watch([() => user.uid, () => (user.rol || '').toLowerCase()], () => {
   page.value = 1
   cursors.value = [null]
   loadPage(1)
 })
 
-// Cambios de página (v-pagination)
+// Cambios de página
 watch(page, (p) => {
   loadPage(p)
 })
@@ -239,14 +224,23 @@ function goNueva() {
             <v-chip value="all" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='all' }">
               <Icon name="mdi:format-list-bulleted" class="me-2" /> Todas
             </v-chip>
-            <v-chip value="pendiente" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='pendiente' }">
+            <v-chip value="Pendiente" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Pendiente' }">
               <Icon name="mdi:progress-clock" class="me-2" /> Pendientes
             </v-chip>
-            <v-chip value="reabierta" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='reabierta' }">
+            <v-chip value="SinRevisar" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='SinRevisar' }">
+              <Icon name="mdi:eye-off" class="me-2" /> Sin Revisar
+            </v-chip>
+            <v-chip value="Reabiertas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Reabiertas' }">
               <Icon name="mdi:refresh" class="me-2" /> Reabiertas
             </v-chip>
-            <v-chip value="resuelta" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='resuelta' }">
-              <Icon name="mdi:check-decagram" class="me-2" /> Resueltas
+            <v-chip value="Cotizadas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Cotizadas' }">
+              <Icon name="mdi:file-certificate" class="me-2" /> Cotizadas
+            </v-chip>
+            <v-chip value="Ganadas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Ganadas' }">
+              <Icon name="mdi:trophy" class="me-2" /> Ganadas
+            </v-chip>
+            <v-chip value="Perdidas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Perdidas' }">
+              <Icon name="mdi:thumb-down" class="me-2" /> Perdidas
             </v-chip>
           </v-chip-group>
 
@@ -271,19 +265,19 @@ function goNueva() {
         </div>
 
         <!-- Buscador + acción -->
-        <div class="d-flex align-center justify-end ga-3 w-50">
+        <div class="d-flex align-center justify-end ga-3 w-33">
           <v-text-field
             v-model="search"
             variant="outlined"
             density="compact"
             placeholder="Buscar por cliente (igual exacto)…"
             hide-details
-            style="max-width: 320px"
+            style="max-width: 300px"
           >
             <template #prepend-inner><Icon name="mdi:magnify" /></template>
           </v-text-field>
 
-          <v-btn color="primary" prepend-icon="mdi-plus" rounded="lg" size="large" @click="goNueva">
+          <v-btn color="primary" rounded="lg" size="large" @click="goNueva">
             Nueva cotización
           </v-btn>
         </div>
@@ -299,7 +293,7 @@ function goNueva() {
 
     <!-- Grid -->
     <v-row v-else>
-      <v-col cols="12" md="4" v-for="c in items" :key="c.id">
+      <v-col cols="12" md="4" v-for="c in itemsFiltrados" :key="c.id">
         <v-card class="card shadow-sm">
           <v-card-text>
             <div class="d-flex items-start justify-between">
@@ -316,8 +310,14 @@ function goNueva() {
                 </div>
               </div>
               <div class="text-gray-500 text-sm w-50 d-flex justify-end">
-                <v-chip :color="statusChip(c.estado).color" size="small" label>
-                  {{ statusChip(c.estado).text }}
+                <!-- ocultar chip Pendiente si 100% -->
+                <v-chip
+                  v-if="!c.uiHidePend"
+                  :color="c.uiColor"
+                  size="small"
+                  label
+                >
+                  {{ chipTextFromFiltro(c.uiFiltro) }}
                 </v-chip>
               </div>
             </div>
@@ -347,20 +347,20 @@ function goNueva() {
             </div>
 
             <div class="d-flex items-center justify-between text-sm mb-1 mt-2">
-                <div class="text-gray-500 mr-1">Progreso</div>
-                <div class="font-medium">
-                  {{ progressByEstado(c.estado, c.workflow) }}%
-                  ·
-                  {{ statusChip(c.estado).text }}
-                  <span v-if="c.workflow">· {{ c.workflow.replace('_',' ') }}</span>
-                </div>
+              <div class="text-gray-500 mr-1">Progreso</div>
+              <div class="font-medium">
+                {{ c.uiProgress }}%
+                ·
+                {{ chipTextFromFiltro(c.uiFiltro) }}
+                <span v-if="c.workflow">· {{ c.workflow.replace('_',' ') }}</span>
               </div>
-              <v-progress-linear
-                :model-value="progressByEstado(c.estado, c.workflow)"
-                :color="progressColor(c.estado, c.workflow)"
-                height="6"
-                rounded
-              />
+            </div>
+            <v-progress-linear
+              :model-value="c.uiProgress"
+              :color="c.uiColor"
+              height="6"
+              rounded
+            />
           </v-card-text>
 
           <v-divider />
@@ -373,7 +373,7 @@ function goNueva() {
         </v-card>
       </v-col>
 
-      <v-col cols="12" v-if="!items.length && !loading">
+      <v-col cols="12" v-if="!itemsFiltrados.length && !loading">
         <v-alert type="info" variant="tonal">
           No hay cotizaciones con esos filtros.
         </v-alert>

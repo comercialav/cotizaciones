@@ -42,7 +42,7 @@ function fmtDate(ts?: any) {
 }
 function sumLineas(art: any[]) {
   return (art || []).reduce((a, r) =>
-    a + (Number(r.unidades) || 0) * (Number(r.precioCotizado) || 0), 0)
+    a + (Number(r.unidades) || 0) * (Number(r.precioSolicitado) || 0), 0)
 }
 function initials(name?: string | null) {
   return (name || user.email || "U").split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0]?.toUpperCase()||"").join("")

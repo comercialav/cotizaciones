@@ -28,7 +28,7 @@ function resetKpis(){
   kpis.totalCotizado=0;kpis.descuentoMedioPct=0
 }
 
-function sumLineas(articulos:any[], field:"precioCotizado"|"precioCliente"){
+function sumLineas(articulos:any[], field:"precioSolicitado"|"precioCliente"){
   return (articulos||[]).reduce((a,r)=> a + (Number(r.unidades)||0)*(Number(r[field])||0),0)
 }
 
@@ -94,7 +94,7 @@ function computeStats(){
     if(estado==="reabierta") kpis.reabiertas++
     if(d.stockDisponible===false) kpis.sinStock++
 
-    const totCot=sumLineas(d.articulos,"precioCotizado")
+    const totCot=sumLineas(d.articulos,"precioSolicitado")
     const totCli=sumLineas(d.articulos,"precioCliente")
     kpis.totalCotizado+=totCot
     const descPct=totCli>0?(1-(totCot/totCli))*100:0
@@ -305,7 +305,7 @@ const rankingOpts = computed(()=>({
                     <td>{{r.numero}}</td>
                     <td>{{r.cliente}}</td>
                     <td><v-chip :color="r.estado==='resuelta'?'success':(r.estado==='pendiente'?'warning':'primary')" size="small">{{r.estado}}</v-chip></td>
-                    <td class="text-right">€ {{ sumLineas(r.articulos,'precioCotizado').toFixed(2) }}</td>
+                    <td class="text-right">€ {{ sumLineas(r.articulos,'precioSolicitado').toFixed(2) }}</td>
                   </tr>
                   <tr v-if="last8.length===0">
                     <td colspan="4" class="text-center text-gray-500">Sin solicitudes aún</td>
