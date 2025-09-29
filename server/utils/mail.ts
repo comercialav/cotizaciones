@@ -30,21 +30,56 @@ export async function renderTemplate(templateName: string, data: Record<string, 
 }
 
 /** Genera tabla sencilla (solicitud de cotización) */
-export function renderItemsTable(articulos: Array<any>) {
-  return tableBase(
-    (a) => ({
-      cols: [
-        itemCol(a),
-        num(a.unidades),
-        eur(a.precioCliente),
-        eur(a.precioSolicitado),
-        eur((Number(a.unidades||0) * Number(a.precioSolicitado||0))),
-      ],
-      strongIdx: [4],
-    }),
-    ["Artículo", "Unid.", "Precio cliente", "Precio solicitado", "Total"]
-  )
+export function renderItemsTable(articulos: any[] = [], stockDisponible?: boolean) {
+  const th = (t:string)=>`<th align="right" style="padding:8px 6px;border-bottom:1px solid #eeeef0;">${t}</th>`
+  const td = (v:string, right=true)=>`<td ${right?'align="right"':''} style="padding:8px 6px;border-bottom:1px solid #eeeef0;">${v}</td>`
+
+  const rows = (articulos||[]).map(a=>{
+    const u = Number(a.unidades||0)
+    const pCliente = Number(a.precioCliente||0)
+    const pSolic = a.precioSolicitado!=null ? Number(a.precioSolicitado) : null
+
+    const noStockBadge = stockDisponible === false
+      ? `<span style="
+            background:#facc15;
+            color:#1f2937;
+            padding:2px 6px;
+            border-radius:6px;
+            font-size:12px;
+            font-weight:600;
+            margin-left:8px;
+          ">No hay stock</span>`
+      : ""
+
+    return `
+    <tr>
+      <td style="padding:8px 6px;border-bottom:1px solid #eeeef0;">
+        <div style="font-weight:bold;color:#191919">${a.articulo ?? "—"} ${noStockBadge}</div>
+        ${a.url ? `<div><a href="${a.url}" target="_blank" style="color:#3c9ae0;text-decoration:underline">${a.url}</a></div>` : ""}
+      </td>
+      ${td(String(u))}
+      ${td(`€ ${pCliente.toFixed(2)}`)}
+      ${td(pSolic!=null ? `€ ${pSolic.toFixed(2)}` : "—")}
+      ${td(`€ ${(u * (pSolic ?? 0)).toFixed(2)}`)}
+    </tr>`
+  }).join("")
+
+  return `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;">
+    <thead>
+      <tr style="color:#666;">
+        <th align="left"  style="padding:8px 6px;border-bottom:1px solid #eeeef0;">Artículo</th>
+        ${th('Unid.')}
+        ${th('Precio cliente')}
+        ${th('Precio solicitado')}
+        ${th('Total')}
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`
 }
+
+
 
 // server/utils/mail.ts
 export function renderCotizadaTable(articulos: any[] = []) {

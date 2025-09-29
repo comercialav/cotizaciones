@@ -28,10 +28,12 @@ type NuevaCotizacion = {
   comentarioStock: string
   licitacion: boolean
   clienteFinal: string
-  precioCompet: number | null        // campo global opcional (mantienes compat)
+  precioCompet: number | null
   comentarios: string
+  formaPagoActual: string 
   formaPagoSolicitada: string
 }
+
 
 
 type CotizacionBase = {
@@ -143,17 +145,22 @@ export const useCotizacionesStore = defineStore("cotizaciones", {
     try {
       const db = getFirestore()
 
-      // Secuencia
-      const year = new Date().getFullYear().toString()
-      const counterRef = doc(db, "counters", `cotizaciones-${year}`)
+      // === Secuencia mensual ===
+      const now = new Date()
+      const yyyy = String(now.getFullYear())
+      const mm   = String(now.getMonth() + 1).padStart(2, '0')
+      const period = `${yyyy}-${mm}`
+      const counterRef = doc(db, 'counters', `cotizaciones-${period}`)
       const seq = await runTransaction(db, async (tx) => {
         const snap = await tx.get(counterRef)
         const cur = (snap.exists() ? (snap.data()?.seq ?? 0) : 0) as number
         const next = cur + 1
-        tx.set(counterRef, { seq: next }, { merge: true })
+        tx.set(counterRef, { seq: next, updatedAt: serverTimestamp() }, { merge: true })
         return next
       })
-      const numero = `${year}-${String(seq).padStart(4, "0")}`
+
+      const seqStr   = String(seq).padStart(3, '0')          // 001, 002, ...
+      const numero = `COT-${period}-${seqStr}`             // COT-2025-09-001
 
       // IMPORTANTE: construir sin undefined, y mantener FieldValue
       const cotRef = doc(collection(db, "cotizaciones"))
@@ -200,12 +207,14 @@ const data: any = {
   plazoEntrega: payload.plazoEntrega || "",
   lugarEntrega: payload.lugarEntrega || "",
   comentarioStock: payload.comentarioStock || "",
+  formaPagoActual: payload.formaPagoActual || "",
   formaPagoSolicitada: payload.formaPagoSolicitada || "",
   licitacion: !!payload.licitacion,
   clienteFinal: payload.licitacion ? (payload.clienteFinal || "") : "",
   comentariosCliente: payload.comentarios || "",
   estado: "pendiente",
 }
+
 if (payload.precioCompet != null) data.precioCompetencia = Number(payload.precioCompet)
 
 const undefPaths = collectUndefinedPaths(data)
@@ -225,8 +234,10 @@ await setDoc(cotRef, data)
       await $fetch("/api/notify", {
         method: "POST",
         body: {
+          action: "solicitud",
           id: cotRef.id,
           numero,
+          vendedor: user.nombre || user.email || 'Desconocido',
           resumen: {
             cliente: data.cliente,
             tarifa: data.tarifa,
@@ -240,6 +251,7 @@ await setDoc(cotRef, data)
             plazoEntrega: data.plazoEntrega,
             lugarEntrega: data.lugarEntrega ?? "",
             comentarioStock: data.comentarioStock ?? "",
+            formaPagoActual: data.formaPagoActual, 
             formaPagoSolicitada: data.formaPagoSolicitada,
             precioCompet: data.precioCompetencia ?? null,
             comentarios: data.comentariosCliente,
@@ -249,8 +261,8 @@ await setDoc(cotRef, data)
             ),
           },
           destinatarios: {
-            vendedor: user.email,
-            vanessa: "vanessa@comercialav.com",
+            comercial: user.email,
+            supervisor: "vanessa@comercialav.com", 
           },
         },
       })

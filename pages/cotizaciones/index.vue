@@ -54,8 +54,48 @@ const loading = ref(true)
 const search  = ref('')
 
 type FiltroClave = 'all' | 'Pendiente' | 'Reabiertas' | 'SinRevisar' | 'Cotizadas' | 'Ganadas' | 'Perdidas'
-const status  = ref<FiltroClave>('all')
 
+function deriveUI(c: any) {
+  const estado = String(c.estado || '').toLowerCase()
+  const workflow = String(c.workflow || '').toLowerCase()
+
+  const isGanada   = estado === 'ganada'
+  const isPerdida  = estado === 'perdida'
+  const isReab     = estado === 'reabierta'
+  const isCotizada = workflow === 'cotizado'
+
+  let uiProgress = 0
+  if (isGanada || isPerdida) uiProgress = 100
+  else if (workflow === 'cotizado') uiProgress = 80
+  else if (workflow === 'espera_cliente') uiProgress = 60
+  else if (workflow === 'consultando') uiProgress = 40
+  else if (workflow === 'en_revision') uiProgress = 20
+
+  const uiColor =
+    isGanada  ? 'green-darken-2' :
+    isPerdida ? 'red-darken-2'   :
+    workflow === 'cotizado' ? 'blue-darken-2' :
+    workflow === 'espera_cliente' ? 'lime-darken-2' :
+    workflow === 'consultando' ? 'yellow-darken-2' :
+    workflow === 'en_revision' ? 'amber-darken-2' : 'amber-darken-2'
+
+  const uiHidePend = uiProgress === 100
+
+  const uiFiltro: Exclude<FiltroClave,'all'|'Pendiente'> =
+    isGanada   ? 'Ganadas'    :
+    isPerdida  ? 'Perdidas'   :
+    isCotizada ? 'Cotizadas'  :
+    isReab     ? 'Reabiertas' :
+                 'SinRevisar'
+
+  return { uiProgress, uiColor, uiHidePend, uiFiltro }
+}
+
+const chipTextFromFiltro = (f: 'Pendiente'|'Cotizadas'|'Ganadas'|'Perdidas'|'Reabiertas'|'SinRevisar') =>
+  f === 'Ganadas' ? 'Ganada' :
+  f === 'Perdidas' ? 'Perdida' :
+  f === 'Reabiertas' ? 'Reabierta' :
+  f === 'Cotizadas' ? 'Cotizada' : 'Pendiente'
 const page    = ref(1)
 const perPage = 9
 
@@ -69,24 +109,73 @@ const pageCount = computed(() => {
   return hasMore.value ? known + 1 : known
 })
 
-// Helpers de UI derivados del store
-const chipTextFromFiltro = (f: 'Pendiente'|'Cotizadas'|'Ganadas'|'Perdidas') =>
-  f === 'Ganadas' ? 'Ganada' :
-  f === 'Perdidas' ? 'Perdida' :
-  f === 'Reabiertas' ? 'Reabierta' :
-  f === 'Cotizadas' ? 'Cotizada' : 'Pendiente'
-  
+const status  = ref<FiltroClave>('all')
+const norm = (s:any) =>
+  String(s||'')
+    .toLowerCase()
+    .normalize('NFD').replace(/\p{Diacritic}/gu,'') // quita tildes
+    .trim()
 
-// Lista filtrada desde el store sobre la página cargada
-const itemsFiltrados = computed(()=>{
-  if (status.value === 'all')        return store.lista
-  if (status.value === 'Pendiente')  return store.pendientes           // = Reabiertas + SinRevisar
-  if (status.value === 'Reabiertas') return store.reabiertas
-  if (status.value === 'SinRevisar') return store.sinRevisar
-  if (status.value === 'Cotizadas')  return store.cotizadas
-  if (status.value === 'Ganadas')    return store.ganadas
-  if (status.value === 'Perdidas')   return store.perdidas
-  return store.lista
+const isGanada = (c:any) => {
+  const e = norm(c.estado)
+  return ['ganada','ganado','ganadas','ganados'].includes(e)
+}
+const isPerdida = (c:any) => {
+  const e = norm(c.estado)
+  return ['perdida','perdido','perdidas','perdidos'].includes(e)
+}
+const isCotizada = (c:any) => norm(c.workflow) === 'cotizado'
+const isSinRevisar = (c:any) => {
+  const e = norm(c.estado)
+  const w = norm(c.workflow)
+  return (!e || e === 'pendiente') && !w
+}
+const isReabierta = (c:any) => {
+  const e = norm(c.estado)
+  const w = norm(c.workflow)
+  return e === 'reabierta' || ((e === 'pendiente' || !e) && ['en_revision','consultando','espera_cliente'].includes(w))
+}
+
+// Lista filtrada SOLO sobre la página actual (pageDocs)
+const itemsFiltrados = computed(() => {
+  const base = (pageDocs.value || []).map(c => ({ ...c, ...deriveUI(c) }))
+
+  // DEBUG resumen por categoría
+  const dbg = { gan:0, per:0, cot:0, sin:0, reab:0, tot: base.length }
+  for (const c of base) {
+    if (isGanada(c)) dbg.gan++
+    if (isPerdida(c)) dbg.per++
+    if (isCotizada(c)) dbg.cot++
+    if (isSinRevisar(c)) dbg.sin++
+    if (isReabierta(c)) dbg.reab++
+  }
+  console.debug('[filtro] status=', status.value, 'resumen=', dbg)
+
+  switch (status.value) {
+    case 'all':         return base
+    case 'Ganadas':     return base.filter(isGanada)
+    case 'Perdidas':    return base.filter(isPerdida)
+    case 'Cotizadas':   return base.filter(isCotizada)
+    case 'SinRevisar':  return base.filter(isSinRevisar)
+    case 'Reabiertas':  return base.filter(isReabierta)
+    case 'Pendiente':   return base.filter(c => isReabierta(c) || isSinRevisar(c))
+    default:            return base
+  }
+})
+
+
+watch(status, v => console.debug('[chips] status ->', v), { immediate:true })
+
+watch(pageDocs, (v) => {
+  console.group('[pageDocs] dump')
+  console.table((v||[]).map(c => ({
+    id: c.id,
+    estado: c.estado ?? '',
+    workflow: c.workflow ?? '',
+    estado_norm: norm(c.estado),
+    workflow_norm: norm(c.workflow),
+  })))
+  console.groupEnd()
 })
 
 
@@ -122,14 +211,32 @@ function buildQuery(forPage: number) {
   }
 
   // --- Orden + límite ---
+  const sv = String(status.value) as FiltroClave
+  switch (sv) {
+    case 'Ganadas':
+      constraints.push(where('estado', '==', 'ganada'))
+      break
+    case 'Perdidas':
+      constraints.push(where('estado', '==', 'perdida'))
+      break
+    case 'Cotizadas':
+      constraints.push(where('workflow', '==', 'cotizado'))
+      break
+    case 'Reabiertas':
+      // Opción 1 simple: solo las marcadas como reabierta
+      constraints.push(where('estado', '==', 'reabierta'))
+      break
+  }
+
   constraints.push(orderBy('updatedAt','desc'))
   constraints.push(limit(perPage))
 
   // --- Cursor ---
-  const cursor = cursors.value[forPage]
+  const cursor = cursors.value[forPage - 1]
   if (forPage > 1 && cursor) {
     constraints.push(startAfter(cursor))
   }
+
   console.debug('[cotizaciones] query página', forPage, constraints)
   return query(base, ...constraints)
 }
@@ -141,13 +248,16 @@ async function loadPage(forPage: number) {
     const q = buildQuery(forPage)
     const snap = await getDocs(q)
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    console.table(docs.map(d => ({
+      id: d.id, estado: d.estado ?? '', workflow: d.workflow ?? ''
+    })))
 
     pageDocs.value = docs
     // sincroniza con el store para que deriveUI actúe
     store.items = docs
 
     hasMore.value = docs.length === perPage
-    cursors.value[forPage + 1] = snap.docs[snap.docs.length - 1] || null
+    cursors.value[forPage] = snap.docs[snap.docs.length - 1] || null
   } catch (e: any) {
     console.error('[cotizaciones] error al cargar la página', e)
   } finally {
@@ -379,11 +489,29 @@ function goNueva() {
         </v-alert>
       </v-col>
     </v-row>
+    <!-- Navegación Anterior / Siguiente -->
+    <div class="d-flex justify-between mt-6">
+      <v-btn
+        variant="text"
+        color="primary"
+        prepend-icon="mdi-chevron-left"
+        :disabled="page <= 1"
+        @click="page = Math.max(1, page - 1)"
+      >
+        Anterior
+      </v-btn>
 
-    <!-- Paginación -->
-    <div class="d-flex justify-center mt-6" v-if="pageCount > 1">
-      <v-pagination v-model="page" :length="pageCount" rounded="circle" />
+      <v-btn
+        variant="text"
+        color="primary"
+        append-icon="mdi-chevron-right"
+        :disabled="!hasMore"
+        @click="page = page + 1"
+      >
+        Siguiente
+      </v-btn>
     </div>
+
   </v-container>
 </template>
 

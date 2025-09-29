@@ -61,6 +61,7 @@ async function guardarNueva(payload:any){
     precioCompet: datosForm.precioCompet ?? null,
     comentarios: datosForm.comentariosCliente || '',
     formaPagoSolicitada: datosForm.formaPagoSolicitada || '',
+    formaPagoActual: datosForm.formaPagoActual || '',
   })
 
   if (id && files.length) {

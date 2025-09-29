@@ -24,6 +24,11 @@ const attachments = ref<any[]>([])
 const SUPERVISOR_ROLE = 'jefe_comercial'
 const supervisorEmail = ref<string|null>(null)
 
+const dlgConfirmacionCompra = ref(false);  // Dialogo para confirmar compra
+const articulosComprados = ref<any[]>([]);  // Artículos seleccionados como comprados
+const comentarios = ref('');  // Comentarios adicionales
+
+
 async function loadSupervisor() {
   const q1 = query(collection($db, 'usuarios'), where('rol', '==', SUPERVISOR_ROLE))
   const s1 = await getDocs(q1)
@@ -294,39 +299,125 @@ const dlgWin = ref(false)
 const dlgLose = ref(false)
 
 async function marcarGanada() {
-  if (!cot.value) return
-  await updateDoc(doc($db,'cotizaciones', id.value), {
-    estado: 'ganada',
-    updatedAt: serverTimestamp()
-  })
-  await addDoc(collection($db,'cotizaciones', id.value, 'comentarios'), {
-    fecha: serverTimestamp(),
-    author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
-    texto: '🎉 Cotización marcada como GANADA.'
-  })
-  await notifySlack(`🏆 ${user.nombre} marcó la cotización “${cot.value?.cliente || id.value}” como *GANADA*`)
-  dlgWin.value = true
+  if (!cot.value) return;
+  dlgConfirmacionCompra.value = true;
 }
 
 async function marcarPerdida() {
-  if (!cot.value) return
-  await updateDoc(doc($db,'cotizaciones', id.value), {
+  if (!cot.value) return;
+
+  // Actualizamos el estado de la cotización a 'perdida'
+  await updateDoc(doc($db, 'cotizaciones', id.value), {
     estado: 'perdida',
-    updatedAt: serverTimestamp()
-  })
-  await addDoc(collection($db,'cotizaciones', id.value, 'comentarios'), {
+    updatedAt: serverTimestamp(),
+  });
+
+  // Añadimos el comentario correspondiente
+  await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
     fecha: serverTimestamp(),
     author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
-    texto: '😔 Cotización marcada como PERDIDA.'
-  })
-  await notifySlack(`🙁 ${user.nombre} marcó la cotización “${cot.value?.cliente || id.value}” como *PERDIDA*`)
-  dlgLose.value = true
+    texto: '😔 Cotización marcada como PERDIDA.',
+  });
+
+  // Enviamos la notificación de Slack
+  await notifySlack(`🙁 ${user.nombre} marcó la cotización “${cot.value?.cliente || id.value}” como *PERDIDA*`);
+
+  // Enviamos el correo con los detalles de la cotización perdida
+  await $fetch('/api/notify', {
+    method: 'POST',
+    body: {
+      action: 'perdida',
+      cotizacionId: cot.value.id,
+      numero: cot.value.numero,
+      cliente: cot.value.cliente,
+      totalCotizado: totalCotizado.value,
+      articulos: cot.value.articulos,
+      destinatarios: {
+        supervisor: supervisorEmail.value,
+        comercial: cot.value.vendedor?.email, 
+      },
+    },
+  });
+
+  dlgLose.value = true;
 }
 
+async function confirmarCompra() {
+  // Agregar un debug para verificar el estado de cot y cot.articulos
+  console.log('Debug - cot.value:', cot.value);  // Ver el objeto completo de cot
+  console.log('Debug - cot.value.articulos:', cot.value?.articulos);  // Ver los artículos de la cotización
+  
+  if (!cot.value || !cot.value.articulos) {
+    console.error('Error - cot.value o cot.value.articulos no está definido');
+    return; // Verificamos que cot.articulos existe antes de continuar
+  }
+
+  // Marcamos los artículos como comprados
+  const nuevosArticulos = cot.value.articulos.map((articulo: any) => ({
+    ...articulo,
+    comprado: articulo.comprado || false,  // Marcamos los artículos comprados
+  }));
+
+  // Debug para ver cómo quedarán los artículos marcados
+  console.log('Debug - nuevosArticulos:', nuevosArticulos);
+
+  // Actualizamos los artículos en la base de datos
+  await updateDoc(doc($db, 'cotizaciones', cot.value.id), {
+    articulos: nuevosArticulos,
+    estado: 'ganada',
+    updatedAt: serverTimestamp(),
+  });
+
+  // Enviar notificación de correo y Slack después de confirmar la compra
+  await $fetch('/api/notify', {
+    method: 'POST',
+    body: {
+      action: 'ganada',
+      cotizacionId: cot.value.id,
+      numero: cot.value.numero,
+      cliente: cot.value.cliente,
+      articulos: nuevosArticulos.filter((articulo: any) => articulo.comprado),
+      totalCotizado: totalCotizado.value,
+      observaciones: cot.value.cotizadoObs,
+      destinatarios: {
+        supervisor: supervisorEmail.value,
+        comercial: cot.value?.vendedor?.email || null,
+      },
+    },
+  });
+
+  // Enviar notificación de Slack
+  await notifySlack(`🏆 La cotización #${cot.value.numero} para ${cot.value.cliente} ha sido ganada. Artículos confirmados: ${nuevosArticulos.filter((articulo: any) => articulo.comprado).map((articulo: any) => articulo.articulo).join(', ')}`, supervisorEmail.value);
+
+  // Cerrar diálogo de confirmación de compra
+  dlgConfirmacionCompra.value = false;
+
+  // Mostrar el diálogo de "Enhorabuena" para que el comercial vea que la cotización fue ganada
+  dlgWin.value = true;
+}
+
+
+
+
+async function sendEmailNotification(status: string, cotizacion: any, toEmail: string) {
+  try {
+    await $fetch('/api/sendEmail', {
+      method: 'POST',
+      body: {
+        subject: `La cotización ${status}`,
+        message: `La cotización con cliente ${cotizacion.cliente} ha sido marcada como ${status}. Los artículos comprados son: ${cotizacion.articulos.filter((a: any) => a.comprado).map((a: any) => a.articulo).join(', ')}.`,
+        to: toEmail,
+      },
+    });
+  } catch (error) {
+    console.error("Error enviando email:", error);
+  }
+}
 
 // --- estado del editor inline de "precioCotizado" ---
 const editIdx = ref<number|null>(null)
 const editValor = ref<number|null>(null)
+const editCoste = ref<number|null>(null)
 
 function abrirEditorPrecio(i: number) {
   const linea = cot.value?.articulos?.[i]
@@ -371,12 +462,62 @@ async function guardarEditorPrecio() {
       fecha: serverTimestamp(),
       author: { uid: user.uid, nombre: user.nombre, rol: user.rol }
     })
-    await notifySlack(`💶 ${msg} en la cotización “${cot.value?.cliente || id.value}”.`)
+    //await notifySlack(`💶 ${msg} en la cotización “${cot.value?.cliente || id.value}”.`)
 
   } catch (e) {
     console.error('Error actualizando precioCotizado:', e)
   } finally {
     cancelarEditorPrecio()
+  }
+}
+
+// Estado para el índice de la fila en edición y el valor que se está editando
+const editCosteIdx = ref<number | null>(null)
+const editCosteValor = ref<number | null>(null)
+
+function abrirEditorCoste(i: number) {
+  const linea = cot.value?.articulos?.[i]
+  editCosteIdx.value = i
+  // Si no hay valor de precio de coste, inicializamos con 0
+  editCosteValor.value = linea && typeof linea.precioCoste === 'number' 
+    ? Number(linea.precioCoste) 
+    : 0
+}
+
+function cancelarEditorCoste() {
+  editCosteIdx.value = null
+  editCosteValor.value = null
+}
+
+// Función para guardar el precio de coste (solo supervisor, sin mensaje)
+async function guardarEditorPrecioCoste() {
+  if (editCosteIdx.value === null || !cot.value) return
+  const i = editCosteIdx.value
+  const coste = Number(editCoste.value ?? 0)
+
+  if (isNaN(coste) || coste < 0) {
+    console.warn('Precio de coste inválido')
+    return
+  }
+  
+
+  // Clonamos las líneas y actualizamos el precio de coste
+  const nuevas = [...(cot.value.articulos || [])]
+  nuevas[i] = { ...nuevas[i], precioCoste: coste }
+
+  try {
+    // Actualizamos el precio de coste, sin generar notificaciones ni comentarios
+    await updateDoc(doc($db, 'cotizaciones', id.value), {
+      articulos: nuevas,
+      updatedAt: serverTimestamp()  // Solo actualizamos el documento con el nuevo precio de coste
+    })
+
+    console.log(`Precio de coste actualizado para el artículo ${nuevas[i].articulo}: ${coste.toFixed(2)} €`)
+
+  } catch (e) {
+    console.error('Error actualizando precio de coste:', e)
+  } finally {
+    cancelarEditorCoste()  // Cancelamos la edición
   }
 }
 
@@ -486,6 +627,7 @@ async function confirmarCotizacion() {
       licitacion: !!cot.value?.licitacion,
       stockDisponible: cot.value?.stockDisponible !== false, // true si no viene false explícito
       formaPagoSolicitada: cot.value?.formaPagoSolicitada || '',
+      formaPagoActual: cot.value?.formaPagoActual || '',
       fechaDecision: cot.value?.fechaDecision || null,
       compradoAntes: !!cot.value?.compradoAntes,
       precioAnterior: cot.value?.precioAnterior ?? null,
@@ -699,6 +841,10 @@ async function confirmarCotizacion() {
                   <div class="text-medium-emphasis text-caption">Forma de pago solicitada</div>
                   <div class="font-weight-medium">{{ cot.formaPagoSolicitada }}</div>
                 </div>
+                <div v-if="cot.formaPagoActual">
+                  <div class="text-medium-emphasis text-caption">Forma de pago actual</div>
+                  <div class="font-weight-medium">{{ cot.formaPagoActual }}</div>
+                </div>
                 <div>
                   <div class="text-medium-emphasis text-caption">Fecha de decisión</div>
                   <div class="font-weight-medium">{{ fmtDateStr(cot.fechaDecision) }}</div>
@@ -739,13 +885,14 @@ async function confirmarCotizacion() {
                     <th class="text-right">Solicitado</th>
                     <th class="text-right">Competencia</th>
                     <th class="text-right">Cotizado</th>
+                    <th v-if="isSupervisor" class="text-right">Total Coste</th>
                     <th class="text-right">Total (cliente)</th>
                     <th class="text-right">Total Cotizado</th>
                     <th class="text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(a,i) in cot.articulos || []" :key="i">
+                  <tr v-for="(a,i) in cot.articulos || []" :key="i" :class="{'articulo-no-comprado': !a.comprado && isGanada}">
                     <td>{{ a.articulo }}</td>
                     <td class="text-right">{{ a.unidades || 0 }}</td>
                     <td class="text-right">{{ (Number(a.precioCliente||0)).toFixed(2) }}€</td>
@@ -757,7 +904,7 @@ async function confirmarCotizacion() {
                       <span v-if="a.precioCompetencia"> {{ (Number(a.precioCompetencia||0)).toFixed(2) }}€</span>
                       <span v-else>—</span>
                     </td>
-                    <td class="text-right">
+                    <td class="text-right editable-celda">
                       <!-- VISUAL normal cuando NO se está editando esta fila -->
                       <template v-if="editIdx !== i">
                         <span v-if="a.precioCotizado != null">
@@ -767,7 +914,7 @@ async function confirmarCotizacion() {
 
                         <!-- Lápiz SOLO para Vanessa -->
 
-                         <v-icon-btn v-if="isSupervisor && !isCotizada && !isGanada && !isPerdida" class="ml-1" @click="abrirEditorPrecio(i)" :title="`Editar precio cotizado de ${a.articulo}`">
+                         <v-icon-btn v-if="isSupervisor && !isCotizada && !isGanada && !isPerdida" class="edit-icon" @click="abrirEditorPrecio(i)" :title="`Editar precio cotizado de ${a.articulo}`">
                             <Icon name="mdi:pencil" class="text-normal" />
                           </v-icon-btn>
                       </template>
@@ -782,7 +929,7 @@ async function confirmarCotizacion() {
                             density="compact"
                             variant="outlined"
                             hide-details
-                            style="max-width:120px"
+                            style="min-width:120px"
                             placeholder="0.00"
                           >
                             <template #append-inner><Icon name="mdi:currency-eur" /></template>
@@ -792,6 +939,47 @@ async function confirmarCotizacion() {
                             <Icon name="mdi:content-save" class="text-xl" />
                           </v-icon-btn>
                           <v-icon-btn color="error" @click="cancelarEditorPrecio">
+                            <Icon name="mdi:close" class="text-xl" />
+                          </v-icon-btn>
+                        </div>
+                      </v-slide-x-transition>
+                    </td>
+                    <!-- Campo de precio de coste (solo visible para supervisor) -->
+                    <td v-if="isSupervisor" class="text-right editable-celda">
+                      <!-- VISUAL normal cuando NO se está editando esta fila -->
+                      <template v-if="editIdx !== i">
+                        <span v-if="a.precioCoste != null">
+                          {{ (Number(a.precioCoste||0)).toFixed(2) }}€
+                        </span>
+                        <span v-else>—</span>
+
+                        <!-- Lápiz SOLO para Vanessa -->
+
+                         <v-icon-btn  v-if="isSupervisor" class="edit-icon" @click="abrirEditorCoste(i)" :title="`Editar precio coste de ${a.articulo}`">
+                            <Icon name="mdi:pencil" class="text-normal" />
+                          </v-icon-btn>
+                      </template>
+
+                      <!-- EDITOR deslizante cuando esta fila está en edición -->
+                      <v-slide-x-transition>
+                        <div v-if="editCosteIdx === i" class="d-inline-flex align-center ga-2">
+                          <v-text-field
+                            v-model.number="editCoste"
+                            type="number"
+                            min="0"
+                            density="compact"
+                            variant="outlined"
+                            hide-details
+                            style="min-width:120px"
+                            placeholder="0.00"
+                          >
+                            <template #append-inner><Icon name="mdi:currency-eur" /></template>
+                          </v-text-field>
+                          
+                          <v-icon-btn color="primary" @click="guardarEditorPrecioCoste">
+                            <Icon name="mdi:content-save" class="text-s" />
+                          </v-icon-btn>
+                          <v-icon-btn color="error" @click="cancelarEditorCoste">
                             <Icon name="mdi:close" class="text-xl" />
                           </v-icon-btn>
                         </div>
@@ -1022,12 +1210,61 @@ async function confirmarCotizacion() {
         </v-dialog>
 
         <!-- Dialog GANADA -->
+        <!-- Dialog Confirmación de Compra -->
+        <v-dialog v-model="dlgConfirmacionCompra" max-width="800px">
+          <v-card>
+            <v-card-title>
+              <span class="text-h6">Confirmar compra de artículos</span>
+            </v-card-title>
+            <v-card-text>
+              <v-alert type="warning" color="yellow" class="mb-4">
+                **Observaciones del Supervisor:** {{ cot.cotizadoObs || 'No hay observaciones' }}
+              </v-alert>
+              <v-table>
+                <thead>
+                  <tr>
+                    <th>Artículo</th>
+                    <th class="text-right">Unidades</th>
+                    <th class="text-right">Seleccionado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(articulo, i) in cot.articulos" :key="i">
+                    <td>{{ articulo.articulo }}</td>
+                    <td class="text-right">{{ articulo.unidades }}</td>
+                   <td class="text-center">
+                      <div class="checkbox-container">
+                        <input 
+                          type="checkbox" 
+                          v-model="articulo.comprado" 
+                          :id="'checkbox-' + i" 
+                          class="custom-checkbox" 
+                        />
+                        <label :for="'checkbox-' + i">{{ articulo.articulo }}</label>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn text @click="dlgConfirmacionCompra = false">Cancelar</v-btn>
+              <v-btn color="success" @click="confirmarCompra">Confirmar Compra</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+
         <v-dialog v-model="dlgWin" max-width="420">
           <v-card class="pa-4" color="green-lighten-5">
             <div class="text-h6 mb-2">¡Enhorabuena! 🎉</div>
             <img src="https://media.giphy.com/media/111ebonMs90YLu/giphy.gif" alt="Congrats" style="width:100%;border-radius:8px;" />
             <div class="mt-3">La cotización se ha marcado como <strong>GANADA</strong>.</div>
-            <v-card-actions class="mt-2"><v-spacer/><v-btn color="primary" @click="dlgWin=false">Cerrar</v-btn></v-card-actions>
+            <v-card-actions class="mt-2">
+              <v-spacer />
+              <v-btn color="primary" @click="dlgWin = false">Cerrar</v-btn>
+            </v-card-actions>
           </v-card>
         </v-dialog>
 
@@ -1094,5 +1331,96 @@ async function confirmarCotizacion() {
   border-color:#c62828;
 }
 
+/* Estilo para mostrar el icono de editar solo al hacer hover */
+.editable-celda {
+  position: relative; /* Necesario para que los elementos hijos con `position: absolute` se posicionen respecto a esta celda */
+}
 
+/* El icono de editar se oculta por defecto */
+.editable-celda .edit-icon {
+  position: absolute;
+  top: 50%; /* Centrado verticalmente */
+  left: 50%; /* Centrado horizontalmente */
+  transform: translate(-50%, -50%); /* Ajusta la posición para centrarlo perfectamente */
+  visibility: hidden; /* Oculto por defecto */
+  opacity: 0; /* Transparente por defecto */
+  transition: visibility 0s, opacity 0.3s ease-in-out; /* Transición para hacerlo visible suavemente */
+}
+
+/* El icono de editar solo aparece cuando se hace hover sobre la celda */
+.editable-celda:hover .edit-icon {
+  visibility: visible; /* Hacerlo visible */
+  opacity: 1; /* Hacerlo opaco */
+}
+/* Contenedor para alinear el checkbox y el texto */
+.checkbox-container {
+  display: flex;
+  align-items: center; /* Centra verticalmente */
+  justify-content: flex-end; /* Alinea el checkbox a la izquierda */
+}
+
+/* Estilos personalizados para el checkbox */
+.custom-checkbox {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 2px solid #bdbdbd;
+  background-color: white;
+  display: inline-block;
+  position: relative;
+  transition: background-color 0.2s, border-color 0.2s;
+  cursor: pointer;
+}
+
+.custom-checkbox:checked {
+  background-color: #00bcd4;
+  border-color: #00bcd4;
+}
+
+.custom-checkbox:checked::after {
+  content: '✔';
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  color: white;
+  font-size: 16px;
+}
+
+.custom-checkbox:hover {
+  background-color: rgba(0, 188, 212, 0.2);
+  border-color: #00bcd4;
+}
+
+.custom-checkbox:focus {
+  border-color: #00bcd4;
+  box-shadow: 0 0 4px rgba(0, 188, 212, 0.5);
+}
+
+.custom-checkbox:disabled {
+  background-color: #e0e0e0;
+  border-color: #bdbdbd;
+  cursor: not-allowed;
+}
+
+.custom-checkbox:disabled:checked {
+  background-color: #9e9e9e;
+  border-color: #9e9e9e;
+}
+
+.custom-checkbox:disabled:checked::after {
+  color: #bdbdbd;
+}
+
+label {
+  margin-left: 10px;
+  cursor: pointer;
+}
+.articulo-no-comprado {
+  color: #b0b0b0; 
+  text-decoration: line-through; 
+  opacity: 0.5;
+}
 </style>

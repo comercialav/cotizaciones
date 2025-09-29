@@ -138,6 +138,7 @@ onMounted(async () => {
     clienteFinal.value    = props.initial.clienteFinal || ""
     comentarios.value     = props.initial.comentariosCliente || ""
     formaPagoSolicitada.value = props.initial?.formaPagoSolicitada || ""
+    formaPagoActual.value = props.initial?.formaPagoActual || ""
     plazoEntrega.value    = props.initial?.plazoEntrega || ""
     lugarEntrega.value    = props.initial?.lugarEntrega || ""
     comentarioStock.value = props.initial?.comentarioStock || ""
@@ -178,6 +179,7 @@ const clienteFinal    = ref("")
 const precioCompet    = ref<number | null>(null)
 const comentarios     = ref("")
 const formaPagoSolicitada = ref("")
+const formaPagoActual = ref("")
 const plazoEntrega  = ref("")
 const lugarEntrega  = ref("")
 const comentarioStock = ref("")
@@ -201,6 +203,9 @@ function validar(): boolean {
   if (!tarifa.value) errores.value.push("Debe seleccionar una tarifa.")
   if (!articulos.value.length) errores.value.push("Debe añadir al menos un artículo.")
   if (!formaPagoSolicitada.value.trim()) errores.value.push("La 'Forma de pago solicitada' es obligatoria.")
+  if (!formaPagoActual.value.trim()) {
+    errores.value.push("La 'Forma de pago actual' es obligatoria.")
+  }
 
   articulos.value.forEach((a, i) => {
     if (!a.articulo || !String(a.articulo).trim()) errores.value.push(`Artículo ${i + 1}: falta el nombre.`)
@@ -280,6 +285,7 @@ function onSubmit() {
     clienteFinal: clienteFinal.value,
     comentariosCliente: comentarios.value,
     formaPagoSolicitada: formaPagoSolicitada.value,
+    formaPagoActual: formaPagoActual.value,
     plazoEntrega: plazoEntrega.value,
     lugarEntrega: lugarEntrega.value,
     comentarioStock: comentarioStock.value,
@@ -387,7 +393,24 @@ function onSubmit() {
           </v-row>
           <!-- Forma de pago solicitada (obligatoria) -->
           <v-row>
-            <v-col cols="12">
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="formaPagoActual"
+                label="Forma de pago actual"
+                variant="outlined"
+                density="comfortable"
+                required
+                :error="errores.some(e => e.includes('Forma de pago actual'))"
+                hint="Ej.: Transferencia, Crédito 30 días…"
+                persistent-hint
+              >
+                <template #prepend-inner>
+                  <Icon name="mdi:credit-card-check-outline" />
+                </template>
+              </v-text-field>
+            </v-col>
+
+            <v-col cols="12" md="6">
               <v-text-field
                 v-model="formaPagoSolicitada"
                 label="Forma de pago solicitada"
