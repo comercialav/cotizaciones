@@ -1,26 +1,42 @@
 # apphosting.yaml
 runConfig:
-  # (opcional) tamaño/memoria/concurrency…
+  # opcional: región, memoria, etc.
+  # region: europe-southwest1
+  # cpu: 1
+  # memoryMiB: 1024
+  # minInstances: 0
+  # maxInstances: 3
 
 env:
   # ===== PUBLIC (BUILD + RUNTIME) =====
   - variable: FIREBASE_API_KEY
-    value: "AIzaSyAN6-i86Pc0NmdHaVkpB7i-BqGtgBz9-Ek"
+    value: AIzaSyAN6-i86Pc0NmdHaVkpB7i-BqGtgBz9-Ek
     availability: [BUILD, RUNTIME]
   - variable: FIREBASE_AUTH_DOMAIN
-    value: "cotizaciones-786c7.firebaseapp.com"
+    value: cotizaciones-786c7.firebaseapp.com
     availability: [BUILD, RUNTIME]
   - variable: FIREBASE_PROJECT_ID
-    value: "cotizaciones-786c7"
+    value: cotizaciones-786c7
     availability: [BUILD, RUNTIME]
   - variable: FIREBASE_STORAGE_BUCKET
-    value: "cotizaciones-786c7.appspot.com"
+    value: cotizaciones-786c7.appspot.com
     availability: [BUILD, RUNTIME]
   - variable: FIREBASE_MESSAGING_SENDER_ID
     value: "989502469025"
     availability: [BUILD, RUNTIME]
   - variable: FIREBASE_APP_ID
-    value: "1:989502469025:web:018cacbe263b9f4be491e0"
+    value: 1:989502469025:web:018cacbe263b9f4be491e0
+    availability: [BUILD, RUNTIME]
+
+  # Algolia (públicas para Nuxt)
+  - variable: NUXT_PUBLIC_ALGOLIA_APP_ID
+    value: 6RUXDEXIKZ
+    availability: [BUILD, RUNTIME]
+  - variable: NUXT_PUBLIC_ALGOLIA_SEARCH_KEY
+    value: ba4d0dc31afa7fc831d1471b8e8ca153
+    availability: [BUILD, RUNTIME]
+  - variable: NUXT_PUBLIC_ALGOLIA_INDEX_NAME
+    value: cotizaciones_prod
     availability: [BUILD, RUNTIME]
 
   # ===== SECRETS (solo RUNTIME) =====
@@ -34,11 +50,12 @@ env:
   - variable: MAIL_PASS
     secret: MAIL_PASS
   - variable: MAIL_FROM
-    value: "cotizaciones@comercialav.com"
+    value: cotizaciones@comercialav.com
     availability: [RUNTIME]
   - variable: SLACK_BOT_TOKEN
     secret: SLACK_BOT_TOKEN
 
+  # Nitro (por si lo lees en tu config)
   - variable: NITRO_PRESET
     value: node-server
     availability: [BUILD, RUNTIME]
