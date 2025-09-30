@@ -12,8 +12,6 @@ import { liteClient as createClient } from 'algoliasearch/lite'
 import type { LiteClient } from 'algoliasearch/lite'
 
 const { public: cfg } = useRuntimeConfig()
-console.debug('[ALGOLIA] appId=', cfg.algoliaAppId, 'index=', cfg.algoliaIndex)
-
 
 let algolia: LiteClient
 let algoliaIndex: { search: (q: string, p?: Record<string, any>) => Promise<any> }
@@ -43,13 +41,7 @@ const user = useUserStore()
 const store = useCotizacionesStore()
 
 // --- Roles / supervisor ---
-const SUPERVISOR_ROLE = 'jefe_comercial'
-const isSupervisor = computed(() => {
-  const r = (user.rol || '').toLowerCase()
-  const ok = r === SUPERVISOR_ROLE || r.includes('vanes') || (user as any).esSupervisor === true || r === 'admin'
-  console.debug('[cotizaciones] rol:', r, 'esSupervisor?', ok, 'flag:', (user as any).esSupervisor)
-  return ok
-})
+const isSupervisor = computed(()=> user.isSupervisor || user.isCompras)
 
 // --- Comerciales (para el select de la supervisora) ---
 const comerciales = ref<{ uid:string; nombre:string; email?:string }[]>([])
@@ -460,7 +452,7 @@ function goNueva() {
             <template #prepend-inner><Icon name="mdi:magnify" /></template>
           </v-text-field>
 
-          <v-btn color="primary" rounded="lg" size="large" @click="goNueva">
+          <v-btn v-if="!user.isCompras" color="primary" rounded="lg" size="large" @click="goNueva">
             Nueva cotización
           </v-btn>
         </div>

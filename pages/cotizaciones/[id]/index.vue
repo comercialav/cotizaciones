@@ -474,52 +474,41 @@ async function guardarEditorPrecio() {
 // Estado para el índice de la fila en edición y el valor que se está editando
 const editCosteIdx = ref<number | null>(null)
 const editCosteValor = ref<number | null>(null)
+const canEditarCoste = computed(() => user.canEditarCoste)       // supervisor o compras
+const canAñadirArticulo = computed(() => user.canAñadirArticulo) // supervisor o compras
 
 function abrirEditorCoste(i: number) {
   const linea = cot.value?.articulos?.[i]
   editCosteIdx.value = i
-  // Si no hay valor de precio de coste, inicializamos con 0
-  editCosteValor.value = linea && typeof linea.precioCoste === 'number' 
-    ? Number(linea.precioCoste) 
+  editCoste.value = linea && typeof linea.precioCoste === 'number'
+    ? Number(linea.precioCoste)
     : 0
 }
-
 function cancelarEditorCoste() {
   editCosteIdx.value = null
-  editCosteValor.value = null
+  editCoste.value = null
 }
-
-// Función para guardar el precio de coste (solo supervisor, sin mensaje)
 async function guardarEditorPrecioCoste() {
   if (editCosteIdx.value === null || !cot.value) return
   const i = editCosteIdx.value
   const coste = Number(editCoste.value ?? 0)
+  if (isNaN(coste) || coste < 0) { console.warn('Precio de coste inválido'); return }
 
-  if (isNaN(coste) || coste < 0) {
-    console.warn('Precio de coste inválido')
-    return
-  }
-  
-
-  // Clonamos las líneas y actualizamos el precio de coste
   const nuevas = [...(cot.value.articulos || [])]
   nuevas[i] = { ...nuevas[i], precioCoste: coste }
 
   try {
-    // Actualizamos el precio de coste, sin generar notificaciones ni comentarios
     await updateDoc(doc($db, 'cotizaciones', id.value), {
       articulos: nuevas,
-      updatedAt: serverTimestamp()  // Solo actualizamos el documento con el nuevo precio de coste
+      updatedAt: serverTimestamp()
     })
-
-    console.log(`Precio de coste actualizado para el artículo ${nuevas[i].articulo}: ${coste.toFixed(2)} €`)
-
   } catch (e) {
     console.error('Error actualizando precio de coste:', e)
   } finally {
-    cancelarEditorCoste()  // Cancelamos la edición
+    cancelarEditorCoste()
   }
 }
+
 
 // --- popup cotizar ---
 const showCotizar = ref(false)
@@ -667,6 +656,50 @@ async function confirmarCotizacion() {
     console.error('Error al cotizar:', e)
   }
 }
+const showAdd = ref(false)
+const nuevaLinea = reactive({
+  articulo: '', url: '', unidades: 1,
+  precioCliente: 0, precioSolicitado: null as number|null,
+  precioCompetencia: null as number|null, precioCoste: null as number|null,
+})
+
+async function agregarLinea() {
+  if (!cot.value) return
+  const linea = {
+    articulo: (nuevaLinea.articulo||'').trim(),
+    url: (nuevaLinea.url||'').trim(),
+    unidades: Number(nuevaLinea.unidades||1),
+    precioCliente: Number(nuevaLinea.precioCliente||0),
+    precioSolicitado: nuevaLinea.precioSolicitado!=null ? Number(nuevaLinea.precioSolicitado) : null,
+    precioCompetencia: nuevaLinea.precioCompetencia!=null ? Number(nuevaLinea.precioCompetencia) : null,
+    precioCoste: nuevaLinea.precioCoste!=null ? Number(nuevaLinea.precioCoste) : null,
+  }
+  const nuevas = [...(cot.value.articulos || []), linea]
+  try {
+    await updateDoc(doc($db, 'cotizaciones', id.value), {
+      articulos: nuevas, updatedAt: serverTimestamp()
+    })
+    await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
+      texto: `➕ ${user.nombre} añadió “${linea.articulo}” (${linea.unidades} uds).`,
+      fecha: serverTimestamp(),
+      author: { uid: user.uid, nombre: user.nombre, rol: user.rol }
+    })
+    
+    if (user.isCompras) {
+      if (!supervisorEmail.value) await loadSupervisor()
+      await notifySlack(
+        `➕ Compras añadió “${linea.articulo}” (${linea.unidades} uds) en la cotización #${cot.value?.numero} – ${cot.value?.cliente}.`,
+        supervisorEmail.value || null
+      )
+    }
+
+    showAdd.value = false
+    Object.assign(nuevaLinea, { articulo:'', url:'', unidades:1, precioCliente:0, precioSolicitado:null, precioCompetencia:null, precioCoste:null })
+  } catch(e){
+    console.error('Error añadiendo artículo:', e)
+  }
+}
+
 </script>
 
 
@@ -809,6 +842,14 @@ async function confirmarCotizacion() {
                 <v-icon-btn color="blue-lighten-5" v-if="isOwner && !isGanada && !isPerdida" @click="navigateTo(`/cotizaciones/${id}/editar`)" class="text-primary">
                   <Icon name="mdi:pencil" class="text-xl" />
                 </v-icon-btn>
+                <v-icon-btn
+                  v-if="canAñadirArticulo && !isCotizada && !isGanada && !isPerdida"
+                  color="primary"
+                  @click="showAdd=true"
+                  :title="'Añadir artículo'"
+                >
+                  <Icon name="mdi:plus" class="text-xl" />
+                </v-icon-btn>
               </div>
 
               <div class="d-flex flex-wrap ga-6 mb-4">
@@ -875,7 +916,7 @@ async function confirmarCotizacion() {
                   <div>{{ cot.comentariosCliente }}</div>
                 </div>
               </div>
-
+              
               <v-table density="comfortable">
                 <thead>
                   <tr>
@@ -885,7 +926,7 @@ async function confirmarCotizacion() {
                     <th class="text-right">Solicitado</th>
                     <th class="text-right">Competencia</th>
                     <th class="text-right">Cotizado</th>
-                    <th v-if="isSupervisor" class="text-right">Total Coste</th>
+                    <th v-if="canEditarCoste" class="text-right">Total Coste</th>
                     <th class="text-right">Total (cliente)</th>
                     <th class="text-right">Total Cotizado</th>
                     <th class="text-right">Acciones</th>
@@ -907,7 +948,7 @@ async function confirmarCotizacion() {
                     <td class="text-right editable-celda">
                       <!-- VISUAL normal cuando NO se está editando esta fila -->
                       <template v-if="editIdx !== i">
-                        <span v-if="a.precioCotizado != null">
+                        <span v-if="a.precioCotizado != null" class="precio-cotizado">
                           {{ (Number(a.precioCotizado||0)).toFixed(2) }}€
                         </span>
                         <span v-else>—</span>
@@ -923,18 +964,12 @@ async function confirmarCotizacion() {
                       <v-slide-x-transition>
                         <div v-if="editIdx === i && !isCotizada && !isGanada && !isPerdida" class="d-inline-flex align-center ga-2">
                           <v-text-field
-                            v-model.number="editValor"
-                            type="number"
-                            min="0"
-                            density="compact"
-                            variant="outlined"
-                            hide-details
-                            style="min-width:120px"
-                            placeholder="0.00"
+                            v-model.number="editCoste"
+                            type="number" min="0" density="compact" variant="outlined" hide-details
+                            style="min-width:120px" placeholder="0.00"
                           >
                             <template #append-inner><Icon name="mdi:currency-eur" /></template>
                           </v-text-field>
-                          
                           <v-icon-btn color="primary" @click="guardarEditorPrecio">
                             <Icon name="mdi:content-save" class="text-xl" />
                           </v-icon-btn>
@@ -945,7 +980,7 @@ async function confirmarCotizacion() {
                       </v-slide-x-transition>
                     </td>
                     <!-- Campo de precio de coste (solo visible para supervisor) -->
-                    <td v-if="isSupervisor" class="text-right editable-celda">
+                    <td v-if="canEditarCoste" class="text-right editable-celda">
                       <!-- VISUAL normal cuando NO se está editando esta fila -->
                       <template v-if="editIdx !== i">
                         <span v-if="a.precioCoste != null">
@@ -955,7 +990,7 @@ async function confirmarCotizacion() {
 
                         <!-- Lápiz SOLO para Vanessa -->
 
-                         <v-icon-btn  v-if="isSupervisor" class="edit-icon" @click="abrirEditorCoste(i)" :title="`Editar precio coste de ${a.articulo}`">
+                         <v-icon-btn  v-if="canEditarCoste" class="edit-icon" @click="abrirEditorCoste(i)" :title="`Editar precio coste de ${a.articulo}`">
                             <Icon name="mdi:pencil" class="text-normal" />
                           </v-icon-btn>
                       </template>
@@ -1000,6 +1035,15 @@ async function confirmarCotizacion() {
                   </tr>
                 </tbody>
               </v-table>
+            </v-card>
+            <v-card v-if="cot.cotizadoObs" class="pa-4 mt-4 obs-card">
+              <div class="d-flex align-center justify-space-between mb-2">
+                <h3 class="text-subtitle-1 font-weight-bold">Observaciones de cotización</h3>
+              </div>
+              <v-card-text class="obs-text">
+                <Icon name="mdi-alert-circle-outline" class="obs-icon" />
+                {{ cot.cotizadoObs }}
+              </v-card-text>
             </v-card>
             <v-card class="pa-4 mt-4">
               <div class="d-flex align-center justify-space-between mb-2">
@@ -1278,6 +1322,30 @@ async function confirmarCotizacion() {
           </v-card>
         </v-dialog>
 
+        <!-- DIALOGO AÑADIR ARTÍCULO -->
+        <v-dialog v-model="showAdd" max-width="640">
+          <v-card>
+            <v-card-title class="text-h6">Añadir artículo</v-card-title>
+            <v-card-text>
+              <v-row dense>
+                <v-col cols="12"><v-text-field v-model="nuevaLinea.articulo" label="Artículo" variant="outlined" hide-details required /></v-col>
+                <v-col cols="12"><v-text-field v-model="nuevaLinea.url" label="URL (opcional)" variant="outlined" hide-details /></v-col>
+                <v-col cols="6"><v-text-field v-model.number="nuevaLinea.unidades" type="number" min="1" label="Unidades" variant="outlined" hide-details /></v-col>
+                <v-col cols="6"><v-text-field v-model.number="nuevaLinea.precioCliente" type="number" min="0" step="0.01" label="Precio tarifa" variant="outlined" hide-details /></v-col>
+                <v-col cols="6"><v-text-field v-model.number="nuevaLinea.precioSolicitado" type="number" min="0" step="0.01" label="Precio solicitado (opcional)" variant="outlined" hide-details /></v-col>
+                <v-col cols="6"><v-text-field v-model.number="nuevaLinea.precioCompetencia" type="number" min="0" step="0.01" label="Precio competencia (opcional)" variant="outlined" hide-details /></v-col>
+                <v-col cols="6"><v-text-field v-model.number="nuevaLinea.precioCoste" type="number" min="0" step="0.01" label="Precio coste (opcional)" variant="outlined" hide-details /></v-col>
+              </v-row>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn variant="text" @click="showAdd=false">Cancelar</v-btn>
+              <v-btn color="primary" :disabled="!nuevaLinea.articulo" @click="agregarLinea">Añadir</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+
       </template>
     </template>
   </v-container>
@@ -1423,4 +1491,21 @@ label {
   text-decoration: line-through; 
   opacity: 0.5;
 }
+.precio-cotizado{ color:#b91c1c; font-weight:700; }
+
+.obs-card{
+  background:#FFF7D6;           /* amarillo claro */
+  border:1px solid #FDE68A;     /* borde ámbar suave */
+  border-radius:12px;
+}
+.obs-text{
+  color:#6B4F2A;                /* marrón */
+  text-align:center;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  font-weight:600;
+}
+.obs-icon{ font-size:20px; }
 </style>

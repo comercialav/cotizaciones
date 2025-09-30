@@ -8,15 +8,20 @@ export default defineNuxtRouteMiddleware(async () => {
   // Espera a que el store termine de cargar
   if (user.loading) {
     await new Promise<void>((resolve) => {
-      const stop = watch(() => user.loading, (v) => { if (!v) { stop(); resolve() } }, { immediate: true })
+      const stop = watch(
+        () => user.loading,
+        (v) => { if (!v) { stop(); resolve() } },
+        { immediate: true }
+      )
     })
   }
 
   const role = (user.rol || "").toLowerCase()
 
-  // ✅ ahora permitimos comercial, admin y jefe_comercial (y alias "vanessa")
+  // comercial, compras, admin, jefe_comercial (y alias "vanessa")
   const allowed =
     role === "comercial" ||
+    role === "compras" ||
     role === "admin" ||
     role === "jefe_comercial" ||
     role.includes("vanes")

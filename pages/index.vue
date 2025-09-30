@@ -66,7 +66,7 @@ const rankingCategories = ref<string[]>([])
 const topClientes = ref<{cliente:string,total:number}[]>([])
 
 // Detectar si es supervisora
-const isSupervisor = computed(()=> user.rol==="jefe_comercial" || user.esSupervisor===true)
+const isSupervisor = computed(()=> user.isSupervisor || user.isCompras)
 
 async function loadComerciales(){
   const qs = await getDocs(query(collection($db,"usuarios"), where("rol","==","comercial")))
@@ -200,13 +200,13 @@ const rankingOpts = computed(()=>({
     <div class="d-flex">
       <div class="intro w-66">
           <div class="mb-4" v-if="isSupervisor">
-          <h2 class="text-2xl font-bold">
-            Hola, {{ user.nombre }} 👋 (Supervisora)
-          </h2>
-          <p class="text-gray-500">
-            Resumen de todos los comerciales
-          </p>
-        </div>
+             <h2 class="text-2xl font-bold">
+               Hola, {{ user.nombre }} 👋 ({{ user.isCompras ? 'Compras' : 'Supervisora' }})
+             </h2>
+             <p class="text-gray-500">
+               Resumen de {{ user.isCompras ? 'todas las cotizaciones' : 'todos los comerciales' }}
+             </p>
+           </div>
         <div class="mb-4" v-else> <h2 class="text-2xl font-bold">Hola, {{ user.nombre || 'Vendedor' }} 👋</h2> <p class="text-gray-500">Tu resumen de cotizaciones</p> </div>
       </div>
       <!-- Selector supervisor -->

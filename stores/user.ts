@@ -32,9 +32,24 @@ export const useUserStore = defineStore("user", {
     loading: true,
   }),
 
+  getters: {
+    isSupervisor(state): boolean {
+      return state.rol === "jefe_comercial" || state.rol === "admin" || state.esSupervisor === true
+    },
+    isCompras(state): boolean {
+      const mail = state.email?.toLowerCase() || ""
+      return state.rol === "compras" || mail === "compras@comercialav.com"
+    },
+    canEditarCoste(): boolean {
+      return this.isSupervisor || this.isCompras
+    },
+    canAñadirArticulo(): boolean {
+      return this.isSupervisor || this.isCompras
+    },
+  },
+
   actions: {
     async initUser(): Promise<void> {
-      // Usa instancias del plugin (evita apps duplicadas)
       const { $auth, $db } = useNuxtApp()
       this.loading = true
 
@@ -44,7 +59,6 @@ export const useUserStore = defineStore("user", {
         onAuthStateChanged($auth, async (u: User | null) => {
           this.loading = true
           try {
-            // Si no hay sesión, entra anónimo (necesario para Storage con request.auth != null)
             if (!u) {
               await signInAnonymously($auth)
               u = $auth.currentUser
@@ -53,7 +67,6 @@ export const useUserStore = defineStore("user", {
             this.uid = u?.uid ?? null
             this.email = u?.email ?? null
 
-            // Usuarios anónimos no tienen email → deja perfil vacío
             const emailRaw = (u?.email || u?.providerData?.[0]?.email || "").trim()
             if (!emailRaw) {
               this.nombre = null
@@ -64,7 +77,7 @@ export const useUserStore = defineStore("user", {
 
             const emailLower = emailRaw.toLowerCase()
 
-            // Busca perfil en 'usuarios' por emailLower y, si no, por email
+            // Busca perfil en 'usuarios'
             let snap = await getDocs(
               query(collection($db, "usuarios"), where("emailLower", "==", emailLower), limit(1))
             )
@@ -78,17 +91,26 @@ export const useUserStore = defineStore("user", {
               const data: any = snap.docs[0].data()
               this.nombre = data.nombre || u?.displayName || emailRaw
               this.rol = normalizeRole(data.rol)
-              this.esSupervisor = Boolean(data.esSupervisor)
-              console.log("[userStore] Perfil cargado:", {
-                email: data.email,
-                rol: this.rol,
-                esSupervisor: this.esSupervisor,
-              })
+              // Si el doc no trae esSupervisor, deriva por rol
+              this.esSupervisor = (typeof data.esSupervisor === "boolean")
+                ? data.esSupervisor
+                : (this.rol === "jefe_comercial" || this.rol === "admin")
             } else {
-              console.warn("[userStore] Sin perfil en 'usuarios' para:", emailRaw)
-              this.nombre = u?.displayName || null
+              // Sin perfil: nombre opcional y rol inicial nulo
+              this.nombre = u?.displayName || emailRaw
               this.rol = null
               this.esSupervisor = null
+            }
+
+            // Fallback específico para compras por email, sin romper datos existentes
+            if (!this.rol && emailLower === "compras@comercialav.com") {
+              this.rol = "compras"
+              this.esSupervisor = false
+            }
+
+            // Normaliza esSupervisor si sigue nulo
+            if (this.esSupervisor == null) {
+              this.esSupervisor = this.rol === "jefe_comercial" || this.rol === "admin"
             }
           } catch (e) {
             console.error("[userStore] Error initUser:", e)
