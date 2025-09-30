@@ -40,6 +40,9 @@ export default defineNuxtConfig({
       firebaseStorageBucket: process.env.FIREBASE_STORAGE_BUCKET || '',
       firebaseMessagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '',
       firebaseAppId: process.env.FIREBASE_APP_ID || '',
+      algoliaAppId: process.env.ALGOLIA_APP_ID,
+      algoliaSearchKey: process.env.ALGOLIA_SEARCH_KEY,
+      algoliaIndex: process.env.ALGOLIA_INDEX_NAME || 'cotizaciones_prod',
     },
   },
 })

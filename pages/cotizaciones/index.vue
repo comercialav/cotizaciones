@@ -8,6 +8,35 @@ import { useCotizacionesStore } from '~/stores/cotizaciones'
 import {
   collection, query, where, orderBy, limit, getDocs, startAfter, DocumentSnapshot
 } from 'firebase/firestore'
+import { liteClient as createClient } from 'algoliasearch/lite'
+import type { LiteClient } from 'algoliasearch/lite'
+
+const { public: cfg } = useRuntimeConfig()
+console.debug('[ALGOLIA] appId=', cfg.algoliaAppId, 'index=', cfg.algoliaIndex)
+
+
+let algolia: LiteClient
+let algoliaIndex: { search: (q: string, p?: Record<string, any>) => Promise<any> }
+
+if (process.client) {
+  algolia = createClient(cfg.algoliaAppId, cfg.algoliaSearchKey)
+
+  algoliaIndex = {
+    async search(q, p = {}) {
+      const { results } = await algolia.searchForHits({
+        requests: [
+          {
+            indexName: cfg.algoliaIndex,   // string
+            query: q,                      // string
+            ...p                           // page, hitsPerPage, facetFilters, etc.
+          }
+        ]
+      })
+      return results[0]
+    }
+  }
+
+}
 
 const { $db } = useNuxtApp()
 const user = useUserStore()
@@ -139,6 +168,7 @@ const isReabierta = (c:any) => {
 // Lista filtrada SOLO sobre la página actual (pageDocs)
 const itemsFiltrados = computed(() => {
   const base = (pageDocs.value || []).map(c => ({ ...c, ...deriveUI(c) }))
+  if (search.value.trim()) return base
 
   // DEBUG resumen por categoría
   const dbg = { gan:0, per:0, cot:0, sin:0, reab:0, tot: base.length }
@@ -245,25 +275,68 @@ function buildQuery(forPage: number) {
 async function loadPage(forPage: number) {
   loading.value = true
   try {
+    const qStr = search.value.trim()
+
+    // --- MODO ALGOLIA: cuando hay texto a buscar ---
+    if (qStr.length > 0) {
+      const pageZero = Math.max(0, forPage - 1)
+
+      // facetFilters: construimos según rol/estado
+      const facetFilters: (string | string[])[] = []
+
+      // ámbito por rol (igual que hacías en Firestore)
+      if (isSupervisor.value) {
+        if (selectedComercialUid.value) {
+          facetFilters.push(`vendedor.uid:${selectedComercialUid.value}`)
+        }
+      } else {
+        facetFilters.push(`vendedor.uid:${user.uid || '__none__'}`)
+      }
+
+      // estado/workflow según chips
+      switch (status.value) {
+        case 'Ganadas':   facetFilters.push(`estado:ganada`); break
+        case 'Perdidas':  facetFilters.push(`estado:perdida`); break
+        case 'Cotizadas': facetFilters.push(`workflow:cotizado`); break
+        case 'Reabiertas':facetFilters.push(`estado:reabierta`); break
+        // 'SinRevisar' / 'Pendiente' las puedes dejar en cliente o mapear si las indexas como flags
+      }
+
+      // Búsqueda “contiene” sobre los atributos configurados en Algolia
+     const res = await algoliaIndex.search(qStr, {
+        page: pageZero,
+        hitsPerPage: perPage,
+        facetFilters: facetFilters.length ? facetFilters : undefined
+      })
+
+
+      const docs = res.hits.map((h: any) => ({ id: h.id || h.objectID, ...h }))
+      pageDocs.value = docs
+      store.items = docs
+      hasMore.value = (res.page + 1) < res.nbPages
+      cursors.value[forPage] = null
+      return
+    }
+
+    // --- MODO FIRESTORE: sin búsqueda (como ya lo tenías) ---
     const q = buildQuery(forPage)
     const snap = await getDocs(q)
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    console.table(docs.map(d => ({
-      id: d.id, estado: d.estado ?? '', workflow: d.workflow ?? ''
-    })))
+    console.table(docs.map(d => ({ id: d.id, estado: d.estado ?? '', workflow: d.workflow ?? '' })))
 
     pageDocs.value = docs
-    // sincroniza con el store para que deriveUI actúe
     store.items = docs
 
     hasMore.value = docs.length === perPage
     cursors.value[forPage] = snap.docs[snap.docs.length - 1] || null
-  } catch (e: any) {
+
+  } catch (e:any) {
     console.error('[cotizaciones] error al cargar la página', e)
   } finally {
     loading.value = false
   }
 }
+
 
 // --- Esperar a que el userStore termine antes de la primera carga ---
 async function boot() {
@@ -380,7 +453,7 @@ function goNueva() {
             v-model="search"
             variant="outlined"
             density="compact"
-            placeholder="Buscar por cliente (igual exacto)…"
+            placeholder="Buscar por cliente (contiene)…"
             hide-details
             style="max-width: 300px"
           >

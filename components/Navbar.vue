@@ -5,6 +5,23 @@ import {
   collection, query, where, getDocs, orderBy, startAt, endAt, limit
 } from "firebase/firestore"
 import { getAuth, signOut } from "firebase/auth"
+import { liteClient as createClient } from 'algoliasearch/lite'
+
+const { public: cfg } = useRuntimeConfig()
+
+let algolia:any, algoliaIndex:{ search:(q:string,p?:Record<string,any>)=>Promise<any> }
+
+if (process.client) {
+  algolia = createClient(cfg.algoliaAppId, cfg.algoliaSearchKey)
+  algoliaIndex = {
+    async search(q, p = {}) {
+      const { results } = await algolia.searchForHits({
+        requests: [{ indexName: cfg.algoliaIndex, query: q, ...p }]
+      })
+      return results[0]
+    }
+  }
+}
 
 const router = useRouter()
 const { $db } = useNuxtApp()
@@ -71,37 +88,28 @@ watch(searchTerm, (val) => {
 async function doSearch(term: string) {
   searchError.value = null
   searchResults.value = []
-  if (term.length < 2) return
+  if (term.length < 2 || !process.client) return
   searchLoading.value = true
   try {
-    const base = collection($db, "cotizaciones")
-    const scope = []
-    if (!isSupervisor.value) {
-      // sólo sus cotizaciones
-      scope.push(where("vendedor.uid", "==", user.uid || "__none__"))
-    }
+    // filtros por rol
+    const facetFilters:(string|string[])[] = []
+    if (!isSupervisor.value) facetFilters.push(`vendedor.uid:${user.uid || '__none__'}`)
 
-    // 1) número exacto
-    const q1 = query(base, ...scope, where("numero", "==", term), limit(5))
-    const s1 = await getDocs(q1)
+    const res = await algoliaIndex.search(term, {
+      page: 0,
+      hitsPerPage: 8,
+      facetFilters: facetFilters.length ? facetFilters : undefined
+    })
 
-    // 2) cliente prefix (case sensitive; si tienes clienteLower crea índice y cambia a orderBy('clienteLower'))
-    const q2 = query(base, ...scope, orderBy("cliente"), startAt(term), endAt(term + "\uf8ff"), limit(5))
-    const s2 = await getDocs(q2)
-
-    // Mezclar únicos
-    const map: Record<string, any> = {}
-    for (const d of [...s1.docs, ...s2.docs]) {
-      const item = { id: d.id, ...d.data() }
-      map[d.id] = item
-    }
-    searchResults.value = Object.values(map).slice(0, 8)
-  } catch (e: any) {
-    searchError.value = e?.message || "Error buscando"
+    const docs = (res.hits || []).map((h:any)=>({ id: h.id || h.objectID, ...h }))
+    searchResults.value = docs
+  } catch (e:any) {
+    searchError.value = e?.message || 'Error buscando'
   } finally {
     searchLoading.value = false
   }
 }
+
 
 function openSearch() {
   searchOpen.value = true
