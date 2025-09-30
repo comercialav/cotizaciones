@@ -8,7 +8,9 @@ import { getAuth, signOut } from "firebase/auth"
 import { liteClient as createClient } from 'algoliasearch/lite'
 
 const { public: cfg } = useRuntimeConfig()
-console.debug('ALGOLIA cfg', cfg)
+console.log('[cfg.public]', useRuntimeConfig().public)
+console.log('[ALGOLIA_APP_ID]', process.env.NUXT_PUBLIC_ALGOLIA_APP_ID)
+
 
 let algolia:any, algoliaIndex:{ search:(q:string,p?:Record<string,any>)=>Promise<any> }
 
