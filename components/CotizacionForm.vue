@@ -716,18 +716,18 @@ function onSubmit() {
               <v-switch v-model="compradoAntes" color="primary" label="¿Nos lo ha comprado anteriormente?" />
             </v-col>
           </v-row>
-          <!-- Comentario sobre artículos si hay stock -->
-          <v-row v-if="stockDisponible">
+          <!-- Comentario sobre artículos siempre visible -->
+          <v-row>
             <v-col cols="12">
-                <v-alert
-                    color="amber-lighten-1"
-                    variant="tonal"
-                    border="start"
-                    class="mb-4"
-                  >
-                    Antes de confirmar, comprueba que haya unidades de todo. Si es parcial, comunícalo;
-                    si es un equipo y falta algún componente, indícalo también.
-                  </v-alert>
+              <v-alert
+                color="amber-lighten-1"
+                variant="tonal"
+                border="start"
+                class="mb-4"
+              >
+                Antes de confirmar, comprueba que haya unidades de todo. Si es parcial, comunícalo;
+                si es un equipo y falta algún componente, indícalo también.
+              </v-alert>
               <v-textarea
                 v-model="comentarioStock"
                 label="Comentario sobre artículos (opcional)"
@@ -735,9 +735,9 @@ function onSubmit() {
                 variant="outlined"
                 density="comfortable"
               />
-              
             </v-col>
           </v-row>
+
 
           <v-row v-if="compradoAntes">
             <v-col cols="12" md="6">

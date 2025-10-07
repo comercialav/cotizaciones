@@ -28,6 +28,9 @@ const dlgConfirmacionCompra = ref(false);  // Dialogo para confirmar compra
 const articulosComprados = ref<any[]>([]);  // Artículos seleccionados como comprados
 const comentarios = ref('');  // Comentarios adicionales
 
+const selectedArticulo = ref<string | null>(null) // Artículo seleccionado para el comentario
+const commentVisibility = ref<'publico' | 'privado'>('publico') // Visibilidad del comentario
+const showVisibilityDialog = ref(false);
 
 async function loadSupervisor() {
   const q1 = query(collection($db, 'usuarios'), where('rol', '==', SUPERVISOR_ROLE))
@@ -169,34 +172,91 @@ async function notifySlack(text: string, toEmailOverride?: string | null) {
 }
 
 // ===== Acciones =====
+function setCommentVisibility(visibility: 'publico' | 'privado') {
+  commentVisibility.value = visibility;
+  showVisibilityDialog.value = false;
+  addComment();
+}
+function onAddCommentClick() {
+  if (user.rol === 'jefe_comercial') {
+    showVisibilityDialog.value = true;
+  } else {
+    commentVisibility.value = user.rol === 'compras' ? 'privado' : 'publico';
+    addComment();
+  }
+}
 async function addComment() {
-  const texto = newComment.value.trim()
-  if (!texto && !fileToUpload.value) return
+  const texto = newComment.value.trim();
+  if (!texto && !fileToUpload.value) return; // Si no hay texto ni archivo, no hacer nada
 
-  let attachment = null
+  let attachment = null;
+
+  // Si hay archivo adjunto, subirlo a Firebase Storage
   if (fileToUpload.value) {
-    if (import.meta.server) return
-    await ensureAuth()
-    const path = `cotizaciones/${id.value}/attachments/${Date.now()}_${fileToUpload.value.name}`
-    const fileRef = storageRef($storage, path)
-    await uploadBytes(fileRef, fileToUpload.value)
-    const url = await getDownloadURL(fileRef)
-    attachment = { nombre: fileToUpload.value.name, url, tipo: fileToUpload.value.type }
+    if (import.meta.server) return; // Si es el entorno del servidor, no proceder
+    await ensureAuth(); // Asegurarse de que el usuario esté autenticado
+    const path = `cotizaciones/${id.value}/attachments/${Date.now()}_${fileToUpload.value.name}`; // Path del archivo
+    const fileRef = storageRef($storage, path); // Referencia al archivo en el Storage
+    await uploadBytes(fileRef, fileToUpload.value); // Subir el archivo
+    const url = await getDownloadURL(fileRef); // Obtener la URL pública del archivo
+    attachment = { nombre: fileToUpload.value.name, url, tipo: fileToUpload.value.type }; // Crear el objeto de attachment
   }
 
+  // Crear el comentario en Firestore
   await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
-    texto: texto || null,
-    attachment,
-    fecha: serverTimestamp(),
-    author: { uid: user.uid, nombre: user.nombre, rol: user.rol }
-  })
+    texto: texto || null, // Texto del comentario
+    attachment, // Adjunto (si existe)
+    visibilidad: commentVisibility.value, // Visibilidad del comentario (público o privado)
+    articuloId: selectedArticulo.value, // ID del artículo al que se refiere el comentario
+    fecha: serverTimestamp(), // Fecha de creación
+    author: { uid: user.uid, nombre: user.nombre, rol: user.rol }, // Información del autor
+  });
 
-  newComment.value = ''
-  fileToUpload.value = null
-  await updateDoc(doc($db, 'cotizaciones', id.value), { updatedAt: serverTimestamp() })
+  // Limpiar los campos de entrada
+  newComment.value = '';
+  fileToUpload.value = null;
+  selectedArticulo.value = null;
+  commentVisibility.value = 'publico';
 
-  await notifySlack(`💬 ${user.nombre} comentó en la cotización “${cot.value?.nombre || cot.value?.cliente || id.value}”: “${texto}”`)
+  showVisibilityAlert.value = false;
+
+  // Si el comentario es privado, enviar notificación por Slack al Supervisor
+  if (commentVisibility.value === 'privado') {
+    if(isSupervisor){
+      // Enviar un correo a compras
+      await $fetch('/api/notify', {
+        method: 'POST',
+        body: {
+          action: 'comentario_privado',
+          comentario: texto,
+          articuloId: selectedArticulo.value,
+          cotizacionId: id.value,
+          cliente: cot.value?.cliente,
+          numero: cot.value?.numero,
+          destinatarios: {
+            compras: 'compras@comercialav.com',
+          },
+        },
+      });
+    }else {
+      const msg = `💬 Nuevo comentario privado sobre el artículo "${selectedArticulo.value}": "${texto}"`;
+      await notifySlack(msg, supervisorEmail.value); // Notificar al Supervisor
+    }
+  } else {
+    // Si es público, notificar a todos (opcional, puedes modificar esto si prefieres solo notificar a los supervisores)
+    const msg = `💬 ${user.nombre} comentó en la cotización “${cot.value?.nombre || cot.value?.cliente || id.value}”: “${texto}”`;
+    await notifySlack(msg); // Notificar en Slack a todos los involucrados
+  }
+
+  // Actualizar el documento de la cotización con la última fecha de actualización
+  await updateDoc(doc($db, 'cotizaciones', id.value), { updatedAt: serverTimestamp() });
 }
+
+const filteredComments = computed(() => {
+  return comments.value.filter(c => c.visibilidad === 'publico' || isSupervisor.value || (user.rol === 'compras' && c.visibilidad === 'privado'));
+});
+
+
 
 async function setWorkflow(flow: 'en_revision'|'consultando'|'espera_cliente') {
   if (!cot.value) return
@@ -760,31 +820,62 @@ async function agregarLinea() {
         </v-card>
 
         <v-row>
-          <!-- IZQUIERDA: Comentarios -->
-         <v-col cols="12" md="4">
+         <!-- IZQUIERDA: Comentarios -->
+          <v-col cols="12" md="4">
             <v-card class="pa-4 d-flex flex-column comments-card">
               <!-- Input arriba -->
-              <div class="d-flex align-center justify-space-between mb-2"> <h3 class="text-subtitle-1 font-weight-bold">Comentarios y actividad</h3> </div>
+              <div class="d-flex align-center justify-space-between mb-2">
+                <h3 class="text-subtitle-1 font-weight-bold">Comentarios y actividad</h3>
+              </div>
               <div class="comment-input-box">
+                <!-- Select para seleccionar el artículo -->
+                <v-select
+                  v-model="selectedArticulo"
+                  :items="cot.articulos"
+                  item-title="articulo"
+                  item-value="articulo"
+                  label="Selecciona un artículo"
+                  variant="outlined"
+                  dense
+                  hide-details
+                  class="mb-2"
+                />
+                <!-- Textarea para el comentario -->
                 <v-textarea
                   v-model="newComment"
-                  label="Escribe un comentario…"
+                  label="Escribe un comentario..."
                   rows="2"
                   auto-grow
                   variant="outlined"
                   hide-details
                 />
 
-                <div class="d-flex ga-2 mt-2 mb-2">
-                  <v-btn color="primary" @click="addComment">
-                    <template #prepend><Icon name="mdi:comment-plus-outline" class="me-1" /></template>
-                    Añadir comentario
-                  </v-btn>
-                  <v-btn icon variant="plain" @click="$refs.fileInput.click()">
-                    <Icon name="mdi:paperclip"/>
-                  </v-btn>
-                  <input type="file" ref="fileInput" class="d-none" @change="onFileChange" />
-                </div>
+                <!-- Botón para añadir comentario (solo visible para el Supervisor) -->
+              <v-btn color="primary" @click="onAddCommentClick">
+                <template #prepend><Icon name="mdi:comment-plus-outline" class="me-1" /></template>
+                Añadir comentario
+              </v-btn>
+
+              <v-dialog v-model="showVisibilityDialog" max-width="500px">
+                <v-card>
+                  <v-card-title class="text-h6">Seleccionar Visibilidad</v-card-title>
+                  <v-card-text>
+                    <p>¿Quieres que el comentario sea <strong>público</strong> o <strong>privado</strong>?</p>
+                  </v-card-text>
+                  <v-card-actions>
+                    <v-spacer />
+                    <v-btn color="primary" @click="setCommentVisibility('publico')">Público</v-btn>
+                    <v-btn color="secondary" @click="setCommentVisibility('privado')">Privado</v-btn>
+                  </v-card-actions>
+                </v-card>
+              </v-dialog>
+
+
+
+                <v-btn icon variant="plain" @click="$refs.fileInput.click()">
+                  <Icon name="mdi:paperclip"/>
+                </v-btn>
+                <input type="file" ref="fileInput" class="d-none" @change="onFileChange" />
               </div>
 
               <v-divider class="my-2" />
@@ -807,7 +898,7 @@ async function agregarLinea() {
                   </div>
                 </div>
 
-                <div v-for="c in comments" :key="c.id" class="d-flex ga-3 mb-3">
+                <div v-for="c in filteredComments" :key="c.id" class="d-flex ga-3 mb-3">
                   <v-avatar :color="colorByRol(c.author?.rol, c.author?.nombre || c.user)" size="36">
                     {{ initials(c.author?.nombre || c.user || '—') }}
                   </v-avatar>
@@ -822,12 +913,18 @@ async function agregarLinea() {
                         {{ c.attachment.nombre }}
                       </a>
                     </div>
-                    <div class="mt-1">{{ c.texto }}</div>
+                     <!-- Verifica si el comentario tiene un articuloId -->
+                    <div v-if="c.articuloId">
+                      <p>Comentario sobre el artículo <strong> {{ c.articuloId }} </strong>: {{ c.texto }}</p>
+                    </div>
+                    <div v-else class="mt-1">{{ c.texto }}</div>
+                    
                   </div>
                 </div>
               </div>
             </v-card>
           </v-col>
+
 
 
 
@@ -907,9 +1004,9 @@ async function agregarLinea() {
                   <div class="text-medium-emphasis text-caption">Lugar de entrega</div>
                   <div class="font-weight-medium">{{ cot.lugarEntrega }}</div>
                 </div>
-                <div v-if="cot.comentarioStock" class="w-100">
+                <div class="w-100">
                   <div class="text-medium-emphasis text-caption">Comentario de stock</div>
-                  <div>{{ cot.comentarioStock }}</div>
+                  <div>{{ cot.comentarioStock || '—' }}</div>
                 </div>
                 <div class="col-span-2 w-100" v-if="cot.comentariosCliente">
                   <div class="text-medium-emphasis text-caption">Comentarios del cliente</div>

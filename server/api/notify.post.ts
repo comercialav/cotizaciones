@@ -192,6 +192,36 @@ export default defineEventHandler(async (event) => {
       console.groupEnd();
       return { ok: true };
     }
+    if (action === 'comentario_privado') {
+      console.group('[API] action: comentario_privado');
+
+      // Extraer la información relevante
+      const comentario = body?.comentario || '—';
+      const articuloId = body?.articuloId || '—';
+      const cotizacionId = body?.cotizacionId || '—';
+      const cliente = body?.cliente || '—';
+      const numero = body?.numero || '—';
+
+      const subject = `Comentario privado sobre la cotización #${numero}`;
+      const html = `
+        <p>El supervisor ha dejado un comentario privado sobre la cotización <strong>#${numero}</strong> – Cliente: ${cliente}.</p>
+        <p><strong>Comentario:</strong> ${comentario}</p>
+        <p><strong>Artículo:</strong> ${articuloId}</p>
+        <p><strong>Cotización ID:</strong> ${cotizacionId}</p>
+      `;
+
+      console.log('[API] Enviando correo a compras@comercialav.com');
+
+      // Enviar el correo a compras@comercialav.com
+      await sendMail({
+        to: ['compras@comercialav.com'],
+        subject: subject,
+        html: html,
+      });
+
+      console.groupEnd();
+      return { ok: true };
+    }
 
     // Acción no reconocida
     console.group('[API] Fallback');
