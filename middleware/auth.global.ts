@@ -11,8 +11,8 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
   console.log("[middleware] →", from.fullPath, "→", to.fullPath, 
               "| loading:", userStore.loading, "uid:", userStore.uid)
 
-  // Espera activa a que termine initUser() la 1ª vez
-  if (userStore.loading) {
+  // Espera activa solo al arranque inicial de la app
+  if (userStore.loading && !userStore.authInitialized) {
     await new Promise<void>((resolve) => {
       const stop = watch(
         () => userStore.loading,
@@ -29,12 +29,12 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
 
   console.log("[middleware] listo | uid:", userStore.uid, "path:", to.path)
 
-  // Redirecciones
-  if (!userStore.uid && to.path !== "/login") {
+  // Redirecciones (email = usuario real; uid anónimo no cuenta como sesión)
+  if (!userStore.isAuthenticated && to.path !== "/login") {
     console.log("[middleware] sin sesión → /login")
     return navigateTo("/login")
   }
-  if (userStore.uid && to.path === "/login") {
+  if (userStore.isAuthenticated && to.path === "/login") {
     console.log("[middleware] con sesión en /login → /")
     return navigateTo("/")
   }

@@ -1,71 +1,32 @@
 // server/api/slack/dm.post.ts
+import { getNotificacionesConfig } from '~/server/utils/notificaciones'
+import { sendSlackDM } from '~/server/utils/slack'
+import { canSendSlack } from '~/utils/notificaciones'
+
 export default defineEventHandler(async (event) => {
-  const { toEmail, text, ccEmail, blocks } = await readBody(event)
+  const { toEmail, text, ccEmail, blocks, event: eventKey } = await readBody(event)
   if (!toEmail || !text) {
-    throw createError({ statusCode: 400, statusMessage: "toEmail y text son obligatorios" })
+    throw createError({ statusCode: 400, statusMessage: 'toEmail y text son obligatorios' })
   }
 
-  const token = process.env.SLACK_BOT_TOKEN
-  console.log(token);
-  if (!token) throw createError({ statusCode: 500, statusMessage: "Falta SLACK_BOT_TOKEN" })
-
-  const base = "https://slack.com/api"
-  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-
-  // 1) Buscar userId por email
-  const userData = await $fetch(`${base}/users.lookupByEmail`, {
-    method: "GET",
-    headers,
-    query: { email: toEmail }
-  })
-  if (!userData.ok) {
-    // p.ej. users_not_found
-    throw createError({ statusCode: 404, statusMessage: `Slack: ${userData.error}` })
+  const notifCfg = await getNotificacionesConfig()
+  const slackEvent = String(eventKey || '').trim()
+  if (slackEvent && !canSendSlack(notifCfg, slackEvent)) {
+    return { ok: true, skipped: true, reason: 'slack_disabled', event: slackEvent }
   }
-  const userId = userData.user.id as string
-
-  // 2) Abrir (o recuperar) el DM
-  const openData = await $fetch(`${base}/conversations.open`, {
-    method: "POST",
-    headers,
-    body: { users: userId }
-  })
-  if (!openData.ok) {
-    throw createError({ statusCode: 500, statusMessage: `Slack: ${openData.error}` })
-  }
-  const channel = (openData as any).channel.id as string
-
-  // 3) Enviar mensaje
-  const postData = await $fetch(`${base}/chat.postMessage`, {
-    method: "POST",
-    headers,
-    body: { channel, text, blocks }
-  })
-  if (!postData.ok) {
-    throw createError({ statusCode: 500, statusMessage: `Slack: ${postData.error}` })
+  if (!notifCfg.slackEnabled) {
+    return { ok: true, skipped: true, reason: 'slack_disabled_global' }
   }
 
-  // CC opcional
+  const result = await sendSlackDM({ toEmail, text, blocks })
+  if (!result.ok) {
+    throw createError({ statusCode: 502, statusMessage: `Slack: ${result.error}` })
+  }
+
+  // CC opcional (no bloquea ni falla la petición principal)
   if (ccEmail) {
-    try {
-      const ccUser = await $fetch(`${base}/users.lookupByEmail`, {
-        method: "GET", headers, query: { email: ccEmail }
-      })
-      if (ccUser.ok) {
-        const ccId = (ccUser as any).user.id
-        const ccOpen = await $fetch(`${base}/conversations.open`, {
-          method: "POST", headers, body: { users: ccId }
-        })
-        if ((ccOpen as any).ok) {
-          await $fetch(`${base}/chat.postMessage`, {
-            method: "POST", headers,
-            body: { channel: (ccOpen as any).channel.id, text, blocks }
-          })
-        }
-      }
-    } catch (e) {
-      console.error("CC Slack falló:", e)
-    }
+    const cc = await sendSlackDM({ toEmail: ccEmail, text, blocks })
+    if (!cc.ok) console.error('CC Slack falló:', cc.error)
   }
 
   return { ok: true }

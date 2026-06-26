@@ -1,7 +1,7 @@
 // stores/user.ts
 import { defineStore } from "pinia"
-import type { User } from "firebase/auth"
-import { onAuthStateChanged, signInAnonymously } from "firebase/auth"
+import type { Auth, User } from "firebase/auth"
+import { onAuthStateChanged, signInAnonymously, signOut } from "firebase/auth"
 import { collection, query, where, getDocs, limit } from "firebase/firestore"
 
 type Role = "comercial" | "jefe_comercial" | "compras" | "admin"
@@ -13,6 +13,8 @@ interface UserState {
   rol: Role | null
   esSupervisor: boolean | null
   loading: boolean
+  authInitialized: boolean
+  skipAnonymousReauth: boolean
 }
 
 function normalizeRole(r: any): Role {
@@ -30,9 +32,14 @@ export const useUserStore = defineStore("user", {
     rol: null,
     esSupervisor: null,
     loading: true,
+    authInitialized: false,
+    skipAnonymousReauth: false,
   }),
 
   getters: {
+    isAuthenticated(state): boolean {
+      return !!state.email
+    },
     isSupervisor(state): boolean {
       return state.rol === "jefe_comercial" || state.rol === "admin" || state.esSupervisor === true
     },
@@ -49,6 +56,14 @@ export const useUserStore = defineStore("user", {
   },
 
   actions: {
+    clearProfile() {
+      this.uid = null
+      this.email = null
+      this.nombre = null
+      this.rol = null
+      this.esSupervisor = null
+    },
+
     async initUser(): Promise<void> {
       const { $auth, $db } = useNuxtApp()
       this.loading = true
@@ -57,9 +72,10 @@ export const useUserStore = defineStore("user", {
         let resolved = false
 
         onAuthStateChanged($auth, async (u: User | null) => {
-          this.loading = true
           try {
             if (!u) {
+              this.clearProfile()
+              if (this.skipAnonymousReauth) return
               await signInAnonymously($auth)
               u = $auth.currentUser
             }
@@ -68,12 +84,14 @@ export const useUserStore = defineStore("user", {
             this.email = u?.email ?? null
 
             const emailRaw = (u?.email || u?.providerData?.[0]?.email || "").trim()
-            if (!emailRaw) {
+            if (!emailRaw || u?.isAnonymous) {
               this.nombre = null
               this.rol = null
               this.esSupervisor = null
               return
             }
+
+            this.skipAnonymousReauth = false
 
             const emailLower = emailRaw.toLowerCase()
 
@@ -115,7 +133,10 @@ export const useUserStore = defineStore("user", {
           } catch (e) {
             console.error("[userStore] Error initUser:", e)
           } finally {
-            this.loading = false
+            if (!this.authInitialized) {
+              this.loading = false
+              this.authInitialized = true
+            }
             if (!resolved) {
               resolved = true
               resolve()
@@ -123,7 +144,10 @@ export const useUserStore = defineStore("user", {
           }
         }, (err) => {
           console.error("[userStore] onAuthStateChanged error:", err)
-          this.loading = false
+          if (!this.authInitialized) {
+            this.loading = false
+            this.authInitialized = true
+          }
           if (!resolved) {
             resolved = true
             resolve()
@@ -132,9 +156,11 @@ export const useUserStore = defineStore("user", {
       })
     },
 
-    logout() {
+    async logout() {
       const { $auth } = useNuxtApp()
-      return $auth.signOut()
+      this.skipAnonymousReauth = true
+      this.clearProfile()
+      await signOut($auth as Auth)
     },
   },
 })

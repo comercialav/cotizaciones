@@ -8,33 +8,6 @@ import { useCotizacionesStore } from '~/stores/cotizaciones'
 import {
   collection, query, where, orderBy, limit, getDocs, startAfter, DocumentSnapshot
 } from 'firebase/firestore'
-import { liteClient as createClient } from 'algoliasearch/lite'
-import type { LiteClient } from 'algoliasearch/lite'
-
-const { public: cfg } = useRuntimeConfig()
-
-let algolia: LiteClient
-let algoliaIndex: { search: (q: string, p?: Record<string, any>) => Promise<any> }
-
-if (process.client) {
-  algolia = createClient(cfg.algoliaAppId, cfg.algoliaSearchKey)
-
-  algoliaIndex = {
-    async search(q, p = {}) {
-      const { results } = await algolia.searchForHits({
-        requests: [
-          {
-            indexName: cfg.algoliaIndex,   // string
-            query: q,                      // string
-            ...p                           // page, hitsPerPage, facetFilters, etc.
-          }
-        ]
-      })
-      return results[0]
-    }
-  }
-
-}
 
 const { $db } = useNuxtApp()
 const user = useUserStore()
@@ -137,6 +110,25 @@ const norm = (s:any) =>
     .normalize('NFD').replace(/\p{Diacritic}/gu,'') // quita tildes
     .trim()
 
+function matchesCliente(c: any, term: string) {
+  const q = norm(term)
+  if (!q) return true
+  return norm(c?.cliente).includes(q)
+}
+
+function applyStatusFilter(base: any[]) {
+  switch (status.value) {
+    case 'all':         return base
+    case 'Ganadas':     return base.filter(isGanada)
+    case 'Perdidas':    return base.filter(isPerdida)
+    case 'Cotizadas':   return base.filter(isCotizada)
+    case 'SinRevisar':  return base.filter(isSinRevisar)
+    case 'Reabiertas':  return base.filter(isReabierta)
+    case 'Pendiente':   return base.filter(c => isReabierta(c) || isSinRevisar(c))
+    default:            return base
+  }
+}
+
 const isGanada = (c:any) => {
   const e = norm(c.estado)
   return ['ganada','ganado','ganadas','ganados'].includes(e)
@@ -160,29 +152,7 @@ const isReabierta = (c:any) => {
 // Lista filtrada SOLO sobre la página actual (pageDocs)
 const itemsFiltrados = computed(() => {
   const base = (pageDocs.value || []).map(c => ({ ...c, ...deriveUI(c) }))
-  if (search.value.trim()) return base
-
-  // DEBUG resumen por categoría
-  const dbg = { gan:0, per:0, cot:0, sin:0, reab:0, tot: base.length }
-  for (const c of base) {
-    if (isGanada(c)) dbg.gan++
-    if (isPerdida(c)) dbg.per++
-    if (isCotizada(c)) dbg.cot++
-    if (isSinRevisar(c)) dbg.sin++
-    if (isReabierta(c)) dbg.reab++
-  }
-  console.debug('[filtro] status=', status.value, 'resumen=', dbg)
-
-  switch (status.value) {
-    case 'all':         return base
-    case 'Ganadas':     return base.filter(isGanada)
-    case 'Perdidas':    return base.filter(isPerdida)
-    case 'Cotizadas':   return base.filter(isCotizada)
-    case 'SinRevisar':  return base.filter(isSinRevisar)
-    case 'Reabiertas':  return base.filter(isReabierta)
-    case 'Pendiente':   return base.filter(c => isReabierta(c) || isSinRevisar(c))
-    default:            return base
-  }
+  return applyStatusFilter(base)
 })
 
 
@@ -209,30 +179,27 @@ const totalCliente = (art: any[]) =>
 const initials = (name: string) =>
   (name || '—').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('')
 
-// Construye la query con filtros de ámbito y búsqueda (el filtrado de estado se hace en cliente)
-function buildQuery(forPage: number) {
-  const base = collection($db, 'cotizaciones')
+// Construye la query con filtros de ámbito (el filtrado de estado se hace en cliente)
+function scopeConstraints() {
   const constraints: any[] = []
 
-  // --- Ámbito por rol ---
   if (isSupervisor.value) {
     if (selectedComercialUid.value) {
-      constraints.push(where('vendedor.uid','==', selectedComercialUid.value))
+      constraints.push(where('vendedor.uid', '==', selectedComercialUid.value))
     }
+  } else if (user.uid) {
+    constraints.push(where('vendedor.uid', '==', user.uid))
   } else {
-    if (!user.uid) {
-      constraints.push(where('vendedor.uid','==','__none__'))
-    } else {
-      constraints.push(where('vendedor.uid','==', user.uid))
-    }
+    constraints.push(where('vendedor.uid', '==', '__none__'))
   }
 
-  // --- Búsqueda exacta por cliente ---
-  if (search.value.trim()) {
-    constraints.push(where('cliente','==', search.value.trim()))
-  }
+  return constraints
+}
 
-  // --- Orden + límite ---
+function buildQuery(forPage: number) {
+  const base = collection($db, 'cotizaciones')
+  const constraints: any[] = [...scopeConstraints()]
+
   const sv = String(status.value) as FiltroClave
   switch (sv) {
     case 'Ganadas':
@@ -245,22 +212,29 @@ function buildQuery(forPage: number) {
       constraints.push(where('workflow', '==', 'cotizado'))
       break
     case 'Reabiertas':
-      // Opción 1 simple: solo las marcadas como reabierta
       constraints.push(where('estado', '==', 'reabierta'))
       break
   }
 
-  constraints.push(orderBy('updatedAt','desc'))
+  constraints.push(orderBy('updatedAt', 'desc'))
   constraints.push(limit(perPage))
 
-  // --- Cursor ---
   const cursor = cursors.value[forPage - 1]
   if (forPage > 1 && cursor) {
     constraints.push(startAfter(cursor))
   }
 
-  console.debug('[cotizaciones] query página', forPage, constraints)
   return query(base, ...constraints)
+}
+
+async function fetchScopedCotizaciones(max = 500) {
+  const constraints = [
+    ...scopeConstraints(),
+    orderBy('updatedAt', 'desc'),
+    limit(max),
+  ]
+  const snap = await getDocs(query(collection($db, 'cotizaciones'), ...constraints))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
 }
 
 // Carga una página concreta
@@ -269,52 +243,23 @@ async function loadPage(forPage: number) {
   try {
     const qStr = search.value.trim()
 
-    // --- MODO ALGOLIA: cuando hay texto a buscar ---
-    if (qStr.length > 0) {
-      const pageZero = Math.max(0, forPage - 1)
+    if (qStr) {
+      const all = await fetchScopedCotizaciones()
+      const byCliente = all.filter(c => matchesCliente(c, qStr))
+      const filtered = applyStatusFilter(byCliente)
+      const start = (forPage - 1) * perPage
+      const slice = filtered.slice(start, start + perPage)
 
-      // facetFilters: construimos según rol/estado
-      const facetFilters: (string | string[])[] = []
-
-      // ámbito por rol (igual que hacías en Firestore)
-      if (isSupervisor.value) {
-        if (selectedComercialUid.value) {
-          facetFilters.push(`vendedor.uid:${selectedComercialUid.value}`)
-        }
-      } else {
-        facetFilters.push(`vendedor.uid:${user.uid || '__none__'}`)
-      }
-
-      // estado/workflow según chips
-      switch (status.value) {
-        case 'Ganadas':   facetFilters.push(`estado:ganada`); break
-        case 'Perdidas':  facetFilters.push(`estado:perdida`); break
-        case 'Cotizadas': facetFilters.push(`workflow:cotizado`); break
-        case 'Reabiertas':facetFilters.push(`estado:reabierta`); break
-        // 'SinRevisar' / 'Pendiente' las puedes dejar en cliente o mapear si las indexas como flags
-      }
-
-      // Búsqueda “contiene” sobre los atributos configurados en Algolia
-     const res = await algoliaIndex.search(qStr, {
-        page: pageZero,
-        hitsPerPage: perPage,
-        facetFilters: facetFilters.length ? facetFilters : undefined
-      })
-
-
-      const docs = res.hits.map((h: any) => ({ id: h.id || h.objectID, ...h }))
-      pageDocs.value = docs
-      store.items = docs
-      hasMore.value = (res.page + 1) < res.nbPages
+      pageDocs.value = slice
+      store.items = slice
+      hasMore.value = start + perPage < filtered.length
       cursors.value[forPage] = null
       return
     }
 
-    // --- MODO FIRESTORE: sin búsqueda (como ya lo tenías) ---
     const q = buildQuery(forPage)
     const snap = await getDocs(q)
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    console.table(docs.map(d => ({ id: d.id, estado: d.estado ?? '', workflow: d.workflow ?? '' })))
 
     pageDocs.value = docs
     store.items = docs
@@ -352,11 +297,21 @@ onMounted(() => {
   boot()
 })
 
-// Cambios de filtros/búsqueda/selección → reiniciar a página 1
-watch([status, () => search.value.trim(), selectedComercialUid], () => {
+// Cambios de filtros → reiniciar a página 1
+watch([status, selectedComercialUid], () => {
   page.value = 1
   cursors.value = [null]
   loadPage(1)
+})
+
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(search, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    page.value = 1
+    cursors.value = [null]
+    loadPage(1)
+  }, 300)
 })
 
 // Si cambia el rol o el uid → recargar
@@ -445,7 +400,7 @@ function goNueva() {
             v-model="search"
             variant="outlined"
             density="compact"
-            placeholder="Buscar por cliente (contiene)…"
+            placeholder="Buscar por nombre de cliente…"
             hide-details
             style="max-width: 300px"
           >

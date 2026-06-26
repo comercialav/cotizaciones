@@ -4,7 +4,6 @@ import { useUserStore } from "~/stores/user"
 import {
   collection, query, where, getDocs, orderBy, startAt, endAt, limit
 } from "firebase/firestore"
-import { getAuth, signOut } from "firebase/auth"
 import { liteClient as createClient } from 'algoliasearch/lite'
 
 const { public: cfg } = useRuntimeConfig()
@@ -134,9 +133,11 @@ function goToCot(id: string) {
 
 /** ---------- Auth ---------- */
 async function logout() {
+  userMenu.value = false
+  avatarUrl.value = null
   try {
-    await signOut(getAuth())
-    router.push("/login")
+    await user.logout()
+    await navigateTo("/login")
   } catch (err) {
     console.error("Error al cerrar sesión:", err)
   }
@@ -176,6 +177,9 @@ async function logout() {
       <NuxtLink to="/cotizaciones" class="nav-btn">
         <Icon name="mdi:clock-outline" class="me-1" /> Cotizaciones
       </NuxtLink>
+      <NuxtLink v-if="isSupervisor" to="/admin/notificaciones" class="nav-btn">
+        <Icon name="mdi:bell-cog-outline" class="me-1" /> Notificaciones
+      </NuxtLink>
     </div>
 
     <v-spacer />
@@ -201,6 +205,10 @@ async function logout() {
         </template>
 
         <v-list>
+          <v-list-item v-if="isSupervisor" @click="router.push('/admin/notificaciones')">
+            <template #prepend><Icon name="mdi:bell-cog-outline" /></template>
+            <v-list-item-title>Notificaciones</v-list-item-title>
+          </v-list-item>
           <v-list-item @click="router.push('/perfil')">
             <v-list-item-title>Perfil</v-list-item-title>
           </v-list-item>

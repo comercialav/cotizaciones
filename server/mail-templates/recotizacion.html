@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Solicitud de recotización – Cotización #{numero}</title>
+  <style>
+    body { margin:0; padding:0; background:#f7f7f7; font-family: Arial, Helvetica, sans-serif; }
+    table { border-collapse: collapse; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellpadding="20" cellspacing="0" border="0" bgcolor="#f7f7f7">
+    <tr><td align="center">
+
+      <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:640px;border-bottom:4px solid #3782c1;">
+        <!-- Cabecera -->
+        <tr>
+          <td style="padding-left:25px; padding-right:25px;">
+            <table role="presentation" width="100%">
+              <tr>
+                <td width="131" align="left" style="padding:20px 0;">
+                  <img width="131" height="85" src="https://online.comercialav.com/img/mails/logo-cabecera.jpg" alt="Comercial AV" style="display:block;border:0" />
+                </td>
+                <td align="right">
+                  <table role="presentation" width="100%">
+                    <tr>
+                      <td height="56" align="right" valign="middle" bgcolor="#f2f2f4" style="font-size:18px;color:#191919;padding-right:24px;font-weight:bold">
+                        Solicitud de recotización
+                      </td>
+                    </tr>
+                    <tr>
+                      <td height="29" bgcolor="#ffffff" align="right" valign="bottom" style="font-size:14px;color:#808080;padding-right:24px">
+                        Fecha:&nbsp; <span style="font-size:18px;color:#000;font-weight:bold">{now}</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Aviso acción requerida -->
+        <tr>
+          <td style="padding:16px 25px 0 25px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#e8f2fb;border:1px solid #bfdbfe;border-radius:8px;">
+              <tr>
+                <td style="padding:14px 16px;font-size:14px;color:#0c3a5b;line-height:1.5;">
+                  <strong>🔁 Acción requerida</strong> — Un comercial ha solicitado revisar los precios de una cotización ya cerrada. Entra en la app para recotizar.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Datos cotización -->
+        <tr>
+          <td style="padding:20px 25px 0 25px;font-size:16px;color:#000;line-height:1.5;">
+            <p style="font-size:22px;font-weight:600;margin:0 0 8px 0;">Cotización #{numero}</p>
+            <p style="margin:0 0 6px 0;"><strong>Cliente:</strong> {cliente}</p>
+            <p style="margin:0 0 6px 0;"><strong>Comercial:</strong> {comercial}</p>
+            <p style="margin:0;"><strong>Total cotizado actual:</strong> €{totalCotizado}</p>
+          </td>
+        </tr>
+
+        <!-- Motivo -->
+        <tr>
+          <td style="padding:16px 25px 0 25px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-size:18px;font-weight:bold;color:#191919;padding-bottom:10px;">Motivo de la solicitud</td>
+              </tr>
+              <tr>
+                <td><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:96px;height:2px;background-color:#3782c1;"><tr><td></td></tr></table></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:12px 25px 20px 25px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #3782c1;border-radius:8px;">
+              <tr>
+                <td style="padding:18px 20px;font-size:15px;color:#1e293b;line-height:1.6;white-space:pre-wrap;">{motivo}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Artículos actuales -->
+        <tr>
+          <td style="padding:0 25px 10px 25px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-size:18px;font-weight:bold;color:#191919;padding-bottom:10px;">Precios actuales</td>
+              </tr>
+              <tr>
+                <td><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:96px;height:2px;background-color:#3782c1;"><tr><td></td></tr></table></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:0 25px 24px 25px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" align="center" style="border:1px solid #eeeef0;border-radius:5px;">
+              <tr>
+                <td style="padding:16px 16px 8px 16px;font-size:13px;color:#64748b;">
+                  Revisa y actualiza los precios cotizados desde la app.
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:0 16px 16px 16px;">
+                  {itemsTable}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Referencia -->
+        <tr>
+          <td style="padding:0 25px 24px 25px;">
+            <table role="presentation" width="100%" cellpadding="10" cellspacing="0" border="0" bgcolor="#f7f9fc" style="border:1px solid #e5ecf6;border-radius:6px;font-size:13px;color:#64748b;">
+              <tr>
+                <td><strong style="color:#475569;">Referencia:</strong> {cotizacionId}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Pie -->
+        <tr>
+          <td align="center" style="padding: 8px 10px 48px 10px;">
+            <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="max-width:640px; color:#555; font-size:12px;">
+              <tr><td style="text-align:center;font-size:14px;line-height:24px;">Copyright © {current_year} Comercial AV</td></tr>
+              <tr><td style="text-align:center;font-size:12px;">Abre la cotización en la app para confirmar la recotización.</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+
+    </td></tr>
+  </table>
+</body>
+</html>

@@ -1,10 +1,20 @@
-// filepath: server/api/notify.post.ts
+// server/api/notify.post.ts
 import { defineEventHandler, readBody } from 'h3'
 import { renderTemplate, renderItemsTable, renderCotizadaTable, sendMail } from '~/server/utils/mail'
+import { getNotificacionesConfig } from '~/server/utils/notificaciones'
+import { actionToEventId, canSendEmail } from '~/utils/notificaciones'
 
 function ensureArray<T>(v: T | T[] | null | undefined): T[] {
   if (!v) return []
   return Array.isArray(v) ? v : [v]
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 export default defineEventHandler(async (event) => {
@@ -16,6 +26,14 @@ export default defineEventHandler(async (event) => {
   console.log('[API] raw body keys:', body ? Object.keys(body) : '(null)')
   const action = String(body?.action || '').toLowerCase()
   console.log('[API] action:', action)
+
+  const notifCfg = await getNotificacionesConfig()
+  const eventId = actionToEventId(action)
+  if (!canSendEmail(notifCfg, eventId)) {
+    console.warn('[API] Email desactivado para:', eventId)
+    console.groupEnd()
+    return { ok: true, skipped: true, reason: 'email_disabled', event: eventId }
+  }
 
   // destinatarios
   const to: string[] = [
@@ -174,13 +192,17 @@ export default defineEventHandler(async (event) => {
       const subject = `Cotización #${numero} – ${action === 'ganada' ? '¡Ganada! ✅' : 'Perdida ❌'}`;
       
       // Plantilla para el correo
+      const estado = action === 'ganada' ? 'ganada' : 'perdida'
       const html = await renderTemplate('cotizacion-ganada-perdida.html', {
         now: nowStr,
         numero,
         cliente,
         totalCotizado: totalCotizado.toFixed(2),
-        estado: action === 'ganada' ? 'ganada' : 'perdida',
+        estado,
+        estadoLabel: estado === 'ganada' ? 'Ganada' : 'Perdida',
         itemsTable: itemsHtml,
+        observaciones: body?.observaciones || '',
+        current_year: new Date().getFullYear(),
       });
 
       // Enviar correo
@@ -192,31 +214,65 @@ export default defineEventHandler(async (event) => {
       console.groupEnd();
       return { ok: true };
     }
+
+    if (action === 'recotizacion') {
+      console.group('[API] action: recotizacion');
+
+      const motivo = body?.motivo || 'Sin motivo indicado';
+      const comercial = body?.comercial || body?.solicitante || '—';
+      const cotizacionId = body?.cotizacionId || '—';
+      const totalCotizado = Number(body?.totalCotizado || 0);
+      const articulos = Array.isArray(body?.articulos) ? body.articulos : [];
+      const itemsHtml = renderCotizadaTable(articulos);
+
+      const html = await renderTemplate('recotizacion.html', {
+        now: nowStr,
+        numero,
+        cliente,
+        comercial: escapeHtml(comercial),
+        motivo: escapeHtml(motivo),
+        totalCotizado: totalCotizado.toFixed(2),
+        itemsTable: itemsHtml,
+        cotizacionId: escapeHtml(cotizacionId),
+        current_year: new Date().getFullYear(),
+      });
+
+      const subject = `🔁 Recotización solicitada – Cotización #${numero} – ${cliente}`;
+      await sendMail({ to, subject, html });
+
+      console.groupEnd();
+      return { ok: true };
+    }
+
     if (action === 'comentario_privado') {
       console.group('[API] action: comentario_privado');
 
-      // Extraer la información relevante
       const comentario = body?.comentario || '—';
-      const articuloId = body?.articuloId || '—';
+      const articulo = body?.articuloId || body?.articulo || '—';
       const cotizacionId = body?.cotizacionId || '—';
       const cliente = body?.cliente || '—';
       const numero = body?.numero || '—';
+      const autor = body?.autor || 'Supervisor';
 
-      const subject = `Comentario privado sobre la cotización #${numero}`;
-      const html = `
-        <p>El supervisor ha dejado un comentario privado sobre la cotización <strong>#${numero}</strong> – Cliente: ${cliente}.</p>
-        <p><strong>Comentario:</strong> ${comentario}</p>
-        <p><strong>Artículo:</strong> ${articuloId}</p>
-        <p><strong>Cotización ID:</strong> ${cotizacionId}</p>
-      `;
+      const html = await renderTemplate('comentario-privado.html', {
+        now: nowStr,
+        numero,
+        cliente,
+        articulo: escapeHtml(articulo),
+        autor: escapeHtml(autor),
+        comentario: escapeHtml(comentario),
+        cotizacionId: escapeHtml(cotizacionId),
+        current_year: new Date().getFullYear(),
+      });
+
+      const subject = `🔒 Comentario privado – Cotización #${numero} – ${cliente}`;
 
       console.log('[API] Enviando correo a compras@comercialav.com');
 
-      // Enviar el correo a compras@comercialav.com
       await sendMail({
         to: ['compras@comercialav.com'],
-        subject: subject,
-        html: html,
+        subject,
+        html,
       });
 
       console.groupEnd();

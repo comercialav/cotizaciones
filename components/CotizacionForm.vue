@@ -23,7 +23,12 @@ type AdjuntoDB = {
   path?: string | null
 }
 
-const props = defineProps<{ mode?: 'create' | 'edit', initial?: any }>()
+const props = defineProps<{
+  mode?: 'create' | 'edit'
+  initial?: any
+  loading?: boolean
+  detailUrl?: string
+}>()
 const emit = defineEmits<{ (e:'submit', payload:any): void }>()
 
 const { $db, $storage, $auth } = useNuxtApp()
@@ -190,6 +195,25 @@ const totalCotizado = computed(()=> articulos.value.reduce((a,r)=> a + (r.unidad
 const ahorro        = computed(()=> totalCliente.value - totalCotizado.value)
 const ahorroPct     = computed(()=> totalCliente.value>0 ? (ahorro.value/totalCliente.value)*100 : 0)
 
+const fechaDisplay = computed(() => {
+  if (props.mode === 'edit' && props.initial?.fechaCreacion) {
+    const raw = props.initial.fechaCreacion
+    const d = raw?.toDate?.() || raw
+    const parsed = new Date(d)
+    if (!isNaN(parsed.getTime())) return parsed.toLocaleDateString('es-ES')
+  }
+  return new Date().toLocaleDateString('es-ES')
+})
+const numeroDisplay = computed(() =>
+  props.mode === 'edit' ? (props.initial?.numero || '—') : 'Auto-generado'
+)
+const vendedorDisplay = computed(() =>
+  props.mode === 'edit'
+    ? (props.initial?.vendedor?.nombre || '—')
+    : (user.nombre || '...')
+)
+const isSubmitting = computed(() => props.loading ?? cotStore.saving)
+
 // ======= reglas =======
 const required = (v:any)=> (!!v || v===0) || "Obligatorio"
 const positive = (v:any)=> (v===null || v===undefined || Number(v) >= 0) || "Debe ser ≥ 0"
@@ -305,9 +329,9 @@ function onSubmit() {
 
 
 <template>
-  <v-row class="gap-6">
+  <v-row class="form-layout">
     <!-- Columna principal -->
-    <v-col cols="12" md="8" class="pa-0">
+    <v-col cols="12" lg="8" class="form-main">
       <v-card class="glass mb-6" elevation="8">
         <v-card-text>
           <div class="section-title">
@@ -319,7 +343,7 @@ function onSubmit() {
             <v-col cols="12" md="4">
               <v-text-field
                 label="Fecha"
-                :model-value="new Date().toLocaleDateString()"
+                :model-value="fechaDisplay"
                 variant="outlined"
                 density="comfortable"
                 disabled
@@ -333,6 +357,7 @@ function onSubmit() {
             <v-col cols="12" md="4">
               <v-text-field
                 label="Nº de Cotización"
+                :model-value="numeroDisplay"
                 placeholder="Auto-generado"
                 variant="outlined"
                 density="comfortable"
@@ -347,7 +372,7 @@ function onSubmit() {
             <v-col cols="12" md="4">
               <v-text-field
                 label="Vendedor"
-                :model-value="user.nombre || '...' "
+                :model-value="vendedorDisplay"
                 variant="outlined"
                 density="comfortable"
                 disabled
@@ -444,7 +469,7 @@ function onSubmit() {
           <tr>
             <th style="min-width:220px">Artículo</th>
             <th class="text-center" style="width:74px">URL</th>
-            <th class="num" style="width:90px">Unid.</th>
+            <th class="num-units">Unid.</th>
             <th class="num" style="width:150px">Precio Tarifa (€)</th>
             <th class="num" style="width:150px">
               <div class="d-flex align-center ga-1">
@@ -480,17 +505,21 @@ function onSubmit() {
         </thead>
 
         <tbody>
-          <tr v-for="(row, i) in articulos" :key="i">
+          <tr v-for="(row, i) in articulos" :key="i" :class="{ 'row-locked': isLocked(i) }">
             <!-- Artículo -->
             <td>
-              <v-text-field
-                v-model="row.articulo"
-                variant="outlined" density="compact" hide-details
-                placeholder="Código o descripción"
-                :disabled="isLocked(i)"
-              >
-                <template #prepend-inner><Icon name="mdi:barcode" /></template>
-              </v-text-field>
+              <div class="d-flex align-center ga-2">
+                <Icon v-if="isLocked(i)" name="mdi:lock-outline" class="lock-icon" title="Artículo original bloqueado" />
+                <v-text-field
+                  v-model="row.articulo"
+                  variant="outlined" density="compact" hide-details
+                  placeholder="Código o descripción"
+                  :disabled="isLocked(i)"
+                  class="flex-grow-1"
+                >
+                  <template #prepend-inner><Icon name="mdi:barcode" /></template>
+                </v-text-field>
+              </div>
             </td>
 
             <!-- URL como botón + modal -->
@@ -502,16 +531,14 @@ function onSubmit() {
             </td>
 
             <!-- Unidades estrecho -->
-            <td class="num">
+            <td class="num-units">
               <v-text-field
                 v-model.number="row.unidades" :rules="[positive]"
                 type="number" min="0"
                 variant="outlined" density="compact" hide-details
-                style="max-width:90px"
+                class="units-input"
                 :disabled="isLocked(i)"
-              >
-                <template #prepend-inner><Icon name="mdi:counter" /></template>
-              </v-text-field>
+              />
             </td>
 
             <!-- Precio tarifa estrecho -->
@@ -702,117 +729,197 @@ function onSubmit() {
 </v-card>
 
       <!-- Información adicional -->
-      <v-card class="glass" elevation="8">
+      <v-card class="glass extra-info-card" elevation="8">
         <v-card-text>
           <div class="section-title">
             <Icon name="mdi:clipboard-list-outline" class="text-primary" />
             <span>Información adicional</span>
           </div>
-          <v-row>
-            <v-col cols="12" md="6">
-              <v-switch v-model="stockDisponible" color="primary" label="¿Unidades en stock?" />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-switch v-model="compradoAntes" color="primary" label="¿Nos lo ha comprado anteriormente?" />
-            </v-col>
-          </v-row>
-          <!-- Comentario sobre artículos siempre visible -->
-          <v-row>
-            <v-col cols="12">
-              <v-alert
-                color="amber-lighten-1"
-                variant="tonal"
-                border="start"
-                class="mb-4"
+
+          <p class="section-lead">
+            Completa los datos logísticos y comerciales que ayuden al supervisor a cotizar con precisión.
+          </p>
+
+          <div class="subsection-label">Opciones</div>
+          <div class="toggle-grid mb-2">
+            <div class="toggle-card" :class="{ 'toggle-card--active': stockDisponible }">
+              <v-switch
+                v-model="stockDisponible"
+                color="primary"
+                hide-details
+                density="compact"
+                class="toggle-card__switch"
+              />
+              <div>
+                <div class="toggle-card__title">Unidades en stock</div>
+                <div class="toggle-card__hint">Indica si hay disponibilidad de los artículos solicitados</div>
+              </div>
+            </div>
+
+            <div class="toggle-card" :class="{ 'toggle-card--active': compradoAntes }">
+              <v-switch
+                v-model="compradoAntes"
+                color="primary"
+                hide-details
+                density="compact"
+                class="toggle-card__switch"
+              />
+              <div>
+                <div class="toggle-card__title">Compra anterior</div>
+                <div class="toggle-card__hint">El cliente ya nos ha comprado este producto antes</div>
+              </div>
+            </div>
+
+            <div class="toggle-card" :class="{ 'toggle-card--active': licitacion }">
+              <v-switch
+                v-model="licitacion"
+                color="primary"
+                hide-details
+                density="compact"
+                class="toggle-card__switch"
+              />
+              <div>
+                <div class="toggle-card__title">Es licitación</div>
+                <div class="toggle-card__hint">Actívalo si la cotización forma parte de un concurso</div>
+              </div>
+            </div>
+          </div>
+
+          <v-expand-transition>
+            <div v-if="licitacion" class="mt-3 mb-1">
+              <v-text-field
+                v-model="clienteFinal"
+                :rules="[required]"
+                label="Cliente final"
+                hint="Obligatorio cuando es licitación"
+                persistent-hint
+                variant="outlined"
+                density="comfortable"
               >
-                Antes de confirmar, comprueba que haya unidades de todo. Si es parcial, comunícalo;
-                si es un equipo y falta algún componente, indícalo también.
-              </v-alert>
-              <v-textarea
-                v-model="comentarioStock"
-                label="Comentario sobre artículos (opcional)"
-                rows="2"
+                <template #prepend-inner><Icon name="mdi:account-group-outline" /></template>
+              </v-text-field>
+            </div>
+          </v-expand-transition>
+
+          <v-divider class="my-5" />
+
+          <div class="subsection-label">Stock y artículos</div>
+          <div class="callout callout--info mb-4">
+            <Icon name="mdi:information-outline" class="callout__icon" />
+            <p class="callout__text">
+              Antes de confirmar, comprueba que haya unidades de todo. Si es parcial, comunícalo;
+              si es un equipo y falta algún componente, indícalo también.
+            </p>
+          </div>
+
+          <v-textarea
+            v-model="comentarioStock"
+            label="Comentario sobre artículos"
+            placeholder="Ej.: venta casi cerrada, falta un componente del kit..."
+            rows="2"
+            variant="outlined"
+            density="comfortable"
+            auto-grow
+            hide-details="auto"
+            class="mb-4"
+          />
+
+          <v-expand-transition>
+            <v-row v-if="compradoAntes" class="mb-2">
+              <v-col cols="12" md="4">
+                <v-text-field
+                  v-model.number="precioAnterior"
+                  :rules="[positive]"
+                  label="Precio anterior"
+                  variant="outlined"
+                  density="comfortable"
+                  type="number"
+                  min="0"
+                  suffix="€"
+                >
+                  <template #prepend-inner><Icon name="mdi:history" /></template>
+                </v-text-field>
+              </v-col>
+            </v-row>
+          </v-expand-transition>
+
+          <v-divider class="my-5" />
+
+          <div class="subsection-label">Entrega y plazos</div>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field
+                v-model="fechaDecision"
+                label="Fecha de decisión"
+                type="date"
                 variant="outlined"
                 density="comfortable"
               />
             </v-col>
-          </v-row>
-
-
-          <v-row v-if="compradoAntes">
-            <v-col cols="12" md="6">
-              <v-text-field v-model.number="precioAnterior" :rules="[positive]" label="Precio anterior" variant="outlined" >
-                <template #prepend-inner><Icon name="mdi:history" /></template>
-              </v-text-field>
-            </v-col>
-          </v-row>
-
-          <v-row>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="fechaDecision" label="Fecha de decisión" type="date" variant="outlined">
-                <template #prepend-inner><Icon name="mdi:calendar-check-outline" /></template>
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="plazoEntrega" label="Plazo de entrega" variant="outlined" placeholder="Ej: 7 días">
+            <v-col cols="12" md="4">
+              <v-text-field
+                v-model="plazoEntrega"
+                label="Plazo de entrega"
+                variant="outlined"
+                density="comfortable"
+                placeholder="Ej.: 7 días, inmediato..."
+              >
                 <template #prepend-inner><Icon name="mdi:truck-delivery-outline" /></template>
               </v-text-field>
             </v-col>
-          </v-row>
-          <!-- Lugar de entrega (100%) -->
-          <v-row>
-            <v-col cols="12">
+            <v-col cols="12" md="4">
               <v-text-field
                 v-model="lugarEntrega"
-                label="Lugar de entrega (dirección completa)"
+                label="Lugar de entrega"
                 variant="outlined"
                 density="comfortable"
+                placeholder="Oficina, obra, almacén..."
               >
-                <template #prepend-inner>
-                  <Icon name="mdi:map-marker" />
-                </template>
+                <template #prepend-inner><Icon name="mdi:map-marker-outline" /></template>
               </v-text-field>
             </v-col>
           </v-row>
 
-          <v-row>
-            <v-col cols="12" md="6">
-              <v-switch v-model="licitacion" color="primary" label="¿Es licitación?" />
-            </v-col>
-            <v-col cols="12" md="6" v-if="licitacion">
-              <v-text-field v-model="clienteFinal" :rules="[required]" label="Cliente final (obligatorio si es licitación)" variant="outlined">
-                <template #prepend-inner><Icon name="mdi:account-group-outline" /></template>
-              </v-text-field>
-            </v-col>
-          </v-row>
+          <v-divider class="my-5" />
 
-
+          <div class="subsection-label">Comentarios del cliente</div>
           <v-textarea
             v-model="comentarios"
-            label="Comentarios del cliente"
+            label="Observaciones o peticiones del cliente"
             variant="outlined"
             rows="3"
             auto-grow
+            density="comfortable"
+            placeholder="Cualquier detalle relevante para la cotización..."
           >
             <template #prepend-inner><Icon name="mdi:comment-text-outline" /></template>
           </v-textarea>
-          <!-- Lista de errores -->
-            <v-alert
-              v-if="errores.length"
-              type="error"
-              variant="tonal"
-              class="my-4"
+
+          <v-alert
+            v-if="errores.length"
+            type="error"
+            variant="tonal"
+            class="my-4"
+          >
+            <ul class="mb-0 ps-4">
+              <li v-for="(e, i) in errores" :key="i">{{ e }}</li>
+            </ul>
+          </v-alert>
+
+          <div class="form-actions mt-6 d-flex flex-wrap align-center ga-3">
+            <v-btn :loading="isSubmitting" color="primary" size="large" @click="onSubmit">
+              <Icon name="mdi:send-outline" class="me-2" />
+              {{ props.mode === 'edit' ? 'Guardar cambios' : 'Enviar solicitud' }}
+            </v-btn>
+            <v-btn
+              v-if="props.mode === 'edit' && detailUrl"
+              variant="text"
+              :disabled="isSubmitting"
+              @click="navigateTo(detailUrl)"
             >
-              <ul>
-                <li v-for="(e, i) in errores" :key="i">{{ e }}</li>
-              </ul>
-            </v-alert>
-          <div class="mt-6">
-                <v-btn :loading="cotStore.saving" color="primary" size="large" @click="onSubmit">
-                <Icon name="mdi:send-outline" class="me-2" />
-                  {{ props.mode === 'edit' ? 'Guardar cambios' : 'Enviar solicitud' }}
-                </v-btn>
-            </div>
+              Cancelar
+            </v-btn>
+          </div>
 
             <v-snackbar v-model="snackbar.show" :color="snackbar.color" location="bottom right">
                 {{ snackbar.text }}
@@ -822,26 +929,29 @@ function onSubmit() {
     </v-col>
 
     <!-- Columna resumen -->
-    <v-col cols="12" md="3" class="pa-0 pl-5">
-      <v-card class="glass sticky" elevation="10">
+    <v-col cols="12" lg="4" class="form-sidebar">
+      <v-card class="glass summary-card sticky" elevation="10">
         <v-card-text>
-          <div class="section-title mb-2">
+          <div class="summary-header">
             <Icon name="mdi:chart-donut" class="text-primary" />
             <span>Resumen</span>
           </div>
 
-          <div class="summary-row">
-            <span>Total sin Cotizar</span>
-            <strong>€ {{ totalCliente.toFixed(2) }}</strong>
+          <div class="summary-metric">
+            <span class="summary-label">Total tarifa</span>
+            <strong class="summary-value">€ {{ totalCliente.toFixed(2) }}</strong>
           </div>
-          <div class="summary-row">
-            <span>Total Sugerido</span>
-            <strong>€ {{ totalCotizado.toFixed(2) }}</strong>
+          <div class="summary-metric">
+            <span class="summary-label">Total solicitado</span>
+            <strong class="summary-value">€ {{ totalCotizado.toFixed(2) }}</strong>
           </div>
-          <v-divider class="my-2" />
-          <div class="summary-row accent" :class="{ good: ahorro >= 0, bad: ahorro < 0 }">
-            <span>Ahorro</span>
-            <strong>€ {{ ahorro.toFixed(2) }} ({{ ahorroPct.toFixed(1) }}%)</strong>
+          <v-divider class="my-3" />
+          <div class="summary-metric summary-accent" :class="{ good: ahorro >= 0, bad: ahorro < 0 }">
+            <span class="summary-label">Ahorro estimado</span>
+            <strong class="summary-value">
+              € {{ ahorro.toFixed(2) }}
+              <span class="summary-pct">({{ ahorroPct.toFixed(1) }}%)</span>
+            </strong>
           </div>
 
           <v-alert
@@ -860,6 +970,96 @@ function onSubmit() {
 </template>
 
 <style scoped lang="css">
+.form-layout{ margin: 0 }
+.form-main, .form-sidebar{ padding-top: 0; padding-bottom: 0 }
+.section-lead{
+  color:#64748b;
+  font-size:.94rem;
+  line-height:1.5;
+  margin:-.25rem 0 1.25rem;
+}
+.subsection-label{
+  font-size:.72rem;
+  font-weight:700;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:#94a3b8;
+  margin-bottom:.75rem;
+}
+.toggle-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
+  gap:12px;
+}
+.toggle-card{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:14px 14px 14px 10px;
+  border-radius:14px;
+  border:1px solid rgba(15, 23, 42, 0.08);
+  background:#fff;
+  transition:border-color .2s ease, box-shadow .2s ease, background .2s ease;
+}
+.toggle-card--active{
+  border-color:rgba(25, 118, 210, 0.28);
+  background:rgba(25, 118, 210, 0.04);
+  box-shadow:0 4px 14px rgba(25, 118, 210, 0.07);
+}
+.toggle-card__switch{
+  flex-shrink:0;
+  margin-top:-2px;
+}
+.toggle-card__title{
+  font-weight:600;
+  font-size:.9rem;
+  color:#0f172a;
+  line-height:1.3;
+}
+.toggle-card__hint{
+  font-size:.78rem;
+  color:#64748b;
+  line-height:1.4;
+  margin-top:3px;
+}
+.extra-info-card :deep(.v-divider){
+  opacity:.55;
+}
+.callout{
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  padding:14px 16px;
+  border-radius:14px;
+}
+.callout--info{
+  background:rgba(239, 246, 255, 0.85);
+  border:1px solid rgba(59, 130, 246, 0.18);
+  box-shadow:inset 3px 0 0 #3b82f6;
+}
+.callout--warning{
+  background:linear-gradient(135deg, #fffdf7 0%, #fff8e8 100%);
+  border:1px solid rgba(251, 191, 36, 0.28);
+  box-shadow:inset 3px 0 0 #f59e0b;
+}
+.callout__icon{
+  color:#2563eb;
+  font-size:1.15rem;
+  flex-shrink:0;
+  margin-top:2px;
+}
+.callout--warning .callout__icon{ color:#d97706 }
+.callout__text{
+  margin:0;
+  color:#334155;
+  font-size:.92rem;
+  line-height:1.55;
+}
+.lock-icon{
+  flex-shrink: 0;
+  color: #94a3b8;
+  font-size: 1rem;
+}
 .glass{
   border-radius: 18px;
   backdrop-filter: blur(6px);
@@ -883,14 +1083,76 @@ function onSubmit() {
   background:#fff;
   box-shadow: 0 8px 20px rgba(15, 23, 42, .06);
 }
+.modern-table tbody tr.row-locked{
+  background:#f8fafc;
+}
+.modern-table tbody tr.row-locked td:first-child{
+  border-left: 3px solid #cbd5e1;
+}
 .modern-table td{
   padding:8px 10px; vertical-align:middle;
 }
 .modern-table .num{ min-width:140px; text-align:right }
+.modern-table .num-units{
+  width:88px;
+  min-width:88px;
+  max-width:88px;
+  text-align:center;
+  padding-left:8px;
+  padding-right:8px;
+}
+.modern-table .num-units .units-input{
+  max-width:72px;
+  margin-inline:auto;
+}
+.modern-table .num-units :deep(input[type="number"]){
+  text-align:center;
+}
 .total-cell{ font-weight:600; color:#0f172a }
 .actions{ width:56px; text-align:center }
 .sticky{
   position: sticky; top: 24px;
+}
+.summary-card{
+  border-radius: 18px;
+}
+.summary-header{
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  font-weight:700;
+  font-size:1.05rem;
+  margin-bottom:1rem;
+  color:#0f172a;
+}
+.summary-metric{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  gap:1rem;
+  padding:.55rem 0;
+}
+.summary-label{
+  color:#64748b;
+  font-size:.92rem;
+}
+.summary-value{
+  color:#0f172a;
+  font-size:1.02rem;
+  text-align:right;
+}
+.summary-accent .summary-value{
+  font-size:1.08rem;
+}
+.summary-pct{
+  font-size:.88rem;
+  font-weight:600;
+}
+.summary-accent.good .summary-value{ color:#16a34a }
+.summary-accent.bad .summary-value{ color:#dc2626 }
+.form-actions{
+  padding-top:.5rem;
+  border-top:1px solid rgba(15, 23, 42, .08);
 }
 .summary-row{
   display:flex; justify-content:space-between; padding:.4rem 0;

@@ -31,6 +31,8 @@ export default defineNuxtConfig({
     mailFrom: process.env.MAIL_FROM ?? process.env.MAIL_USER,
     mailSecure: 'true',
     slackToken: process.env.SLACK_BOT_TOKEN,
+    firebaseApiKey: process.env.FIREBASE_API_KEY || '',
+    firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
 
     // Públicas (cliente)
     public: {

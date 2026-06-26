@@ -1,11 +1,10 @@
-import { watch } from "vue"
-import { useUserStore } from "~/stores/user"
+import { watch } from 'vue'
+import { useUserStore } from '~/stores/user'
 
 export default defineNuxtRouteMiddleware(async () => {
   if (process.server) return
   const user = useUserStore()
 
-  // Espera solo al arranque inicial
   if (user.loading && !user.authInitialized) {
     await new Promise<void>((resolve) => {
       const stop = watch(
@@ -16,17 +15,14 @@ export default defineNuxtRouteMiddleware(async () => {
     })
   }
 
-  const role = (user.rol || "").toLowerCase()
-
-  // comercial, compras, admin, jefe_comercial (y alias "vanessa")
+  const role = (user.rol || '').toLowerCase()
   const allowed =
-    role === "comercial" ||
-    role === "compras" ||
-    role === "admin" ||
-    role === "jefe_comercial" ||
-    role.includes("vanes")
+    role === 'admin' ||
+    role === 'jefe_comercial' ||
+    role.includes('vanes') ||
+    user.esSupervisor === true
 
   if (!user.isAuthenticated || !allowed) {
-    return navigateTo("/")
+    return navigateTo('/')
   }
 })

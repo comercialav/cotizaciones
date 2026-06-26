@@ -169,6 +169,15 @@ function getTransport() {
   _transport = nodemailer.createTransport({
     host, port, secure,
     auth: user && pass ? { user, pass } : undefined,
+    // Pool + límites conservadores: IONOS rechaza ráfagas de conexiones
+    // simultáneas, lo que provoca que algunos correos no se entreguen.
+    pool: true,
+    maxConnections: 1,
+    maxMessages: 50,
+    // Timeouts explícitos para no quedarnos colgados en conexiones lentas.
+    connectionTimeout: 15_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
     logger: debug,
     debug,
   })
@@ -188,17 +197,17 @@ export async function sendMail(opts: {
 
   const transporter = getTransport()
 
-  // verify una vez por proceso
+  // verify una vez por proceso (aunque falle, no repetimos para no añadir
+  // latencia: algunos servidores no soportan verify pero envían igual)
   if (!_verified) {
     console.time('[MAIL] transporter.verify')
     try {
       await transporter.verify()
-      _verified = true
       console.log('[MAIL] transporter.verify: OK')
     } catch (e) {
       console.error('[MAIL] transporter.verify: ERROR', e)
-      // seguimos igualmente: algunos servidores no soportan verify pero envían igual
     } finally {
+      _verified = true
       console.timeEnd('[MAIL] transporter.verify')
     }
   }
