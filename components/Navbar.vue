@@ -2,28 +2,8 @@
 import { useRouter } from "vue-router"
 import { useUserStore } from "~/stores/user"
 import {
-  collection, query, where, getDocs, orderBy, startAt, endAt, limit
+  collection, query, where, getDocs, orderBy, limit
 } from "firebase/firestore"
-import { liteClient as createClient } from 'algoliasearch/lite'
-
-const { public: cfg } = useRuntimeConfig()
-console.log('[cfg.public]', useRuntimeConfig().public)
-console.log('[ALGOLIA_APP_ID]', process.env.NUXT_PUBLIC_ALGOLIA_APP_ID)
-
-
-let algolia:any, algoliaIndex:{ search:(q:string,p?:Record<string,any>)=>Promise<any> }
-
-if (process.client) {
-  algolia = createClient(cfg.algoliaAppId, cfg.algoliaSearchKey)
-  algoliaIndex = {
-    async search(q, p = {}) {
-      const { results } = await algolia.searchForHits({
-        requests: [{ indexName: cfg.algoliaIndex, query: q, ...p }]
-      })
-      return results[0]
-    }
-  }
-}
 
 const router = useRouter()
 const { $db } = useNuxtApp()
@@ -67,6 +47,19 @@ function initials(name?: string | null) {
   return (name || user.email || "U").split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0]?.toUpperCase()||"").join("")
 }
 
+function norm(s: unknown) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .trim()
+}
+
+function matchesSearch(c: any, term: string) {
+  const q = norm(term)
+  if (!q) return false
+  return norm(c?.cliente).includes(q) || norm(c?.numero).includes(q)
+}
+
 /** ---------- Slack avatar ---------- */
 async function loadSlackAvatar() {
   try {
@@ -93,19 +86,21 @@ async function doSearch(term: string) {
   if (term.length < 2 || !process.client) return
   searchLoading.value = true
   try {
-    // filtros por rol
-    const facetFilters:(string|string[])[] = []
-    if (!isSupervisor.value) facetFilters.push(`vendedor.uid:${user.uid || '__none__'}`)
+    const constraints: any[] = []
+    if (!isSupervisor.value && user.uid) {
+      constraints.push(where('vendedor.uid', '==', user.uid))
+    } else if (!isSupervisor.value) {
+      constraints.push(where('vendedor.uid', '==', '__none__'))
+    }
+    constraints.push(orderBy('updatedAt', 'desc'))
+    constraints.push(limit(200))
 
-    const res = await algoliaIndex.search(term, {
-      page: 0,
-      hitsPerPage: 8,
-      facetFilters: facetFilters.length ? facetFilters : undefined
-    })
-
-    const docs = (res.hits || []).map((h:any)=>({ id: h.id || h.objectID, ...h }))
-    searchResults.value = docs
-  } catch (e:any) {
+    const snap = await getDocs(query(collection($db, 'cotizaciones'), ...constraints))
+    searchResults.value = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(c => matchesSearch(c, term))
+      .slice(0, 8)
+  } catch (e: any) {
     searchError.value = e?.message || 'Error buscando'
   } finally {
     searchLoading.value = false
