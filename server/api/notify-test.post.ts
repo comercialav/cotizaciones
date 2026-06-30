@@ -78,6 +78,7 @@ async function buildTestEmail(eventId: string, sample: ReturnType<typeof buildSa
       lugar_entrega: 'Almacén central',
       forma_pago_actual: 'Transferencia 30 días',
       forma_pago_solicitada: 'Transferencia 60 días',
+      condiciones_especiales: 'Acuerdo de rappel anual, descuento por pronto pago',
       comentario_stock: 'Disponible en almacén.',
       comentarios: 'Cotización de ejemplo generada desde el panel de pruebas.',
     })
@@ -98,6 +99,7 @@ async function buildTestEmail(eventId: string, sample: ReturnType<typeof buildSa
       stock: 'Con stock',
       formaPagoSolicitada: 'Transferencia 60 días',
       formaPagoActual: 'Transferencia 30 días',
+      condicionesEspeciales: 'Acuerdo de rappel anual, descuento por pronto pago',
       fechaDecision: '30/06/2026',
       compradoAntes: 'Sí',
       precioAnterior: '110.00',

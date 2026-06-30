@@ -62,6 +62,7 @@ async function guardarNueva(payload:any){
     comentarios: datosForm.comentariosCliente || '',
     formaPagoSolicitada: datosForm.formaPagoSolicitada || '',
     formaPagoActual: datosForm.formaPagoActual || '',
+    condicionesEspeciales: datosForm.condicionesEspeciales || '',
   })
 
   if (id && files.length) {

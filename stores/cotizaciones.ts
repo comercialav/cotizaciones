@@ -32,6 +32,7 @@ type NuevaCotizacion = {
   comentarios: string
   formaPagoActual: string 
   formaPagoSolicitada: string
+  condicionesEspeciales?: string
 }
 
 
@@ -209,6 +210,7 @@ const data: any = {
   comentarioStock: payload.comentarioStock || "",
   formaPagoActual: payload.formaPagoActual || "",
   formaPagoSolicitada: payload.formaPagoSolicitada || "",
+  condicionesEspeciales: (payload.condicionesEspeciales || "").trim(),
   licitacion: !!payload.licitacion,
   clienteFinal: payload.licitacion ? (payload.clienteFinal || "") : "",
   comentariosCliente: payload.comentarios || "",
@@ -253,6 +255,7 @@ await setDoc(cotRef, data)
             comentarioStock: data.comentarioStock ?? "",
             formaPagoActual: data.formaPagoActual, 
             formaPagoSolicitada: data.formaPagoSolicitada,
+            condicionesEspeciales: data.condicionesEspeciales || "",
             precioCompet: data.precioCompetencia ?? null,
             comentarios: data.comentariosCliente,
             totalCotizado: data.articulos.reduce(

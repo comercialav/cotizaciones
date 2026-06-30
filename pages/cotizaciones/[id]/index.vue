@@ -845,6 +845,7 @@ async function confirmarCotizacion() {
       stockDisponible: cot.value?.stockDisponible !== false, // true si no viene false explícito
       formaPagoSolicitada: cot.value?.formaPagoSolicitada || '',
       formaPagoActual: cot.value?.formaPagoActual || '',
+      condicionesEspeciales: cot.value?.condicionesEspeciales || '',
       fechaDecision: cot.value?.fechaDecision || null,
       compradoAntes: !!cot.value?.compradoAntes,
       precioAnterior: cot.value?.precioAnterior ?? null,
@@ -1212,6 +1213,10 @@ async function agregarLinea() {
                     <div class="detail-field">
                       <dt>Pago actual</dt>
                       <dd>{{ cot.formaPagoActual || '—' }}</dd>
+                    </div>
+                    <div class="detail-field detail-field--wide">
+                      <dt>Condiciones especiales</dt>
+                      <dd>{{ cot.condicionesEspeciales || '—' }}</dd>
                     </div>
                     <div class="detail-field">
                       <dt>Comprado antes</dt>

@@ -83,6 +83,7 @@ export default defineEventHandler(async (event) => {
         lugar_entrega: body?.resumen?.lugarEntrega || '',
         forma_pago_actual: body?.resumen?.formaPagoActual || '',
         forma_pago_solicitada: body?.resumen?.formaPagoSolicitada || '',
+        condiciones_especiales: body?.resumen?.condicionesEspeciales || '',
         comentario_stock: body?.resumen?.comentarioStock || '',
         comentarios: body?.resumen?.comentarios || '',
       })
@@ -154,6 +155,7 @@ export default defineEventHandler(async (event) => {
     stock: body?.stockDisponible === false ? 'Sin stock' : 'Con stock',
     formaPagoSolicitada: body?.formaPagoSolicitada || '',
     formaPagoActual: body?.formaPagoActual || '',
+    condicionesEspeciales: body?.condicionesEspeciales || '',
     fechaDecision: body?.fechaDecision || '',
     compradoAntes: body?.compradoAntes ? 'Sí' : 'No',
     precioAnterior: (body?.precioAnterior ?? '') === '' ? '' : Number(body?.precioAnterior || 0).toFixed(2),

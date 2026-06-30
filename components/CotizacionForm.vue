@@ -43,6 +43,7 @@ async function ensureAuth() {
 
 const cliente = ref("")
 const tarifa  = ref<string | null>(null)
+const condicionesEspeciales = ref("")
 const tarifas = ["A1","A2","A3","A4","A5","A6","A7"]
 const fechaDecision = ref<string | null>(null)
 
@@ -119,6 +120,7 @@ onMounted(async () => {
     console.log('initial:', props.initial)
     cliente.value = props.initial.cliente || ""
     tarifa.value  = props.initial.tarifa  || ""
+    condicionesEspeciales.value = props.initial.condicionesEspeciales || ""
 
     const base = (props.initial.articulos?.length
       ? props.initial.articulos
@@ -310,6 +312,7 @@ function onSubmit() {
     comentariosCliente: comentarios.value,
     formaPagoSolicitada: formaPagoSolicitada.value,
     formaPagoActual: formaPagoActual.value,
+    condicionesEspeciales: condicionesEspeciales.value.trim(),
     plazoEntrega: plazoEntrega.value,
     lugarEntrega: lugarEntrega.value,
     comentarioStock: comentarioStock.value,
@@ -385,7 +388,7 @@ function onSubmit() {
           </v-row>
 
           <v-row>
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="5">
               <v-text-field
                 v-model="cliente"
                 :rules="[required]"
@@ -400,7 +403,7 @@ function onSubmit() {
               </v-text-field>
             </v-col>
 
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="3">
               <v-select
                 v-model="tarifa"
                 :items="tarifas"
@@ -408,12 +411,27 @@ function onSubmit() {
                 label="Tarifa"
                 variant="outlined"
                 density="comfortable"
-                placeholder="Selecciona tarifa"
+                placeholder="Selecciona"
               >
                 <template #prepend-inner>
                   <Icon name="mdi:tag-outline" />
                 </template>
               </v-select>
+            </v-col>
+
+            <v-col cols="12" md="4">
+              <v-text-field
+                v-model="condicionesEspeciales"
+                label="Condiciones Especiales"
+                variant="outlined"
+                density="comfortable"
+                hint="Ej.: Acuerdo de rappel, descuentos por pronto pago, etc…"
+                persistent-hint
+              >
+                <template #prepend-inner>
+                  <Icon name="mdi:handshake-outline" />
+                </template>
+              </v-text-field>
             </v-col>
           </v-row>
           <!-- Forma de pago solicitada (obligatoria) -->
