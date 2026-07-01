@@ -623,6 +623,26 @@ const editCosteIdx = ref<number | null>(null)
 const editCosteValor = ref<number | null>(null)
 const canEditarCoste = computed(() => user.canEditarCoste)       // supervisor o compras
 const canAñadirArticulo = computed(() => user.canAñadirArticulo) // supervisor o compras
+const canBorrarCotizacion = computed(() => user.canBorrarCotizacion)
+
+const showDelete = ref(false)
+const deleting = ref(false)
+const deleteError = ref('')
+
+async function confirmarEliminar() {
+  deleteError.value = ''
+  deleting.value = true
+  try {
+    const { authFetch } = useAuthFetch()
+    await authFetch(`/api/cotizaciones/${id.value}`, { method: 'DELETE' })
+    showDelete.value = false
+    await navigateTo('/cotizaciones')
+  } catch (e: any) {
+    deleteError.value = e?.data?.statusMessage || e?.message || 'No se pudo borrar la cotización'
+  } finally {
+    deleting.value = false
+  }
+}
 
 function abrirEditorCoste(i: number) {
   const linea = cot.value?.articulos?.[i]
@@ -1142,6 +1162,16 @@ async function agregarLinea() {
                   >
                     <template #prepend><Icon name="mdi:plus" /></template>
                     Artículo
+                  </v-btn>
+                  <v-btn
+                    v-if="canBorrarCotizacion"
+                    variant="tonal"
+                    color="error"
+                    size="small"
+                    @click="showDelete = true"
+                  >
+                    <template #prepend><Icon name="mdi:delete-outline" /></template>
+                    Eliminar
                   </v-btn>
                 </div>
               </div>
@@ -1792,6 +1822,29 @@ async function agregarLinea() {
             <img src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcWVpdzFzZ21kZnk4ODBjM3E2cHNzcDRnMWE5NHFpZDVpY292azZwdSZlcD12MV9naWZzX3NlYXJjaCZjdD1n/4V3RuU0zSq1SC8Hh4x/giphy.gif" alt="Sad" style="width:100%;border-radius:8px;" />
             <div class="mt-3">La cotización se ha marcado como <strong>PERDIDA</strong>.</div>
             <v-card-actions class="mt-2"><v-spacer/><v-btn color="primary" @click="dlgLose=false">Cerrar</v-btn></v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Dialog ELIMINAR -->
+        <v-dialog v-model="showDelete" max-width="480" persistent>
+          <v-card>
+            <v-card-title class="text-h6">Eliminar cotización</v-card-title>
+            <v-card-text>
+              <p>
+                ¿Deseas eliminar la cotización
+                <strong>#{{ cot?.numero || '—' }}</strong>
+                de <strong>{{ cot?.cliente || '—' }}</strong>?
+              </p>
+              <p class="text-medium-emphasis mt-2 mb-0">Esta acción no se puede deshacer.</p>
+              <v-alert v-if="deleteError" type="error" variant="tonal" class="mt-4" density="compact">
+                {{ deleteError }}
+              </v-alert>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn variant="text" :disabled="deleting" @click="showDelete = false">Cancelar</v-btn>
+              <v-btn color="error" :loading="deleting" @click="confirmarEliminar">Eliminar</v-btn>
+            </v-card-actions>
           </v-card>
         </v-dialog>
 

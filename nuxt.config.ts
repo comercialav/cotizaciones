@@ -33,6 +33,8 @@ export default defineNuxtConfig({
     slackToken: process.env.SLACK_BOT_TOKEN,
     firebaseApiKey: process.env.FIREBASE_API_KEY || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
+    firebaseServiceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
+    adminEmails: process.env.ADMIN_EMAILS || 'samuel@comercialav.com',
 
     // Públicas (cliente)
     public: {
@@ -42,6 +44,7 @@ export default defineNuxtConfig({
       firebaseStorageBucket: process.env.FIREBASE_STORAGE_BUCKET || '',
       firebaseMessagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '',
       firebaseAppId: process.env.FIREBASE_APP_ID || '',
+      adminEmails: process.env.ADMIN_EMAILS || 'samuel@comercialav.com',
       algoliaAppId: process.env.NUXT_PUBLIC_ALGOLIA_APP_ID,
       algoliaSearchKey: process.env.NUXT_PUBLIC_ALGOLIA_SEARCH_KEY,
       algoliaIndex: process.env.NUXT_PUBLIC_ALGOLIA_INDEX_NAME

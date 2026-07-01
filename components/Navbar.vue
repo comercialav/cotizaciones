@@ -24,8 +24,9 @@ const avatarUrl = ref<string | null>(null)
 
 /** ---------- helpers ---------- */
 const isSupervisor = computed(
-  () => user.rol === "jefe_comercial" || user.esSupervisor === true
+  () => user.rol === "jefe_comercial" || user.rol === "admin" || user.esSupervisor === true
 )
+const isAdmin = computed(() => user.isAdmin)
 
 function roleLabel(r?: string | null) {
   const x = (r || "").toLowerCase()
@@ -172,9 +173,14 @@ async function logout() {
       <NuxtLink to="/cotizaciones" class="nav-btn">
         <Icon name="mdi:clock-outline" class="me-1" /> Cotizaciones
       </NuxtLink>
-      <NuxtLink v-if="isSupervisor" to="/admin/notificaciones" class="nav-btn">
-        <Icon name="mdi:bell-cog-outline" class="me-1" /> Notificaciones
-      </NuxtLink>
+      <ClientOnly>
+        <NuxtLink v-if="isAdmin" to="/admin/notificaciones" class="nav-btn">
+          <Icon name="mdi:bell-cog-outline" class="me-1" /> Notificaciones
+        </NuxtLink>
+        <NuxtLink v-if="isAdmin" to="/admin/usuarios" class="nav-btn">
+          <Icon name="mdi:account-cog-outline" class="me-1" /> Usuarios
+        </NuxtLink>
+      </ClientOnly>
     </div>
 
     <v-spacer />
@@ -185,33 +191,39 @@ async function logout() {
         <Icon name="mdi:magnify" />
       </button>
 
-      <v-menu v-model="userMenu" offset-y transition="scale-transition">
-        <template #activator="{ props }">
-          <div class="user-info-trigger" v-bind="props">
-            <v-avatar size="40" class="avatar hover-scale">
-              <img v-if="avatarUrl" :src="avatarUrl" alt="avatar" width="40" />
-              <span v-else>{{ initials(user.nombre) }}</span>
-            </v-avatar>
-            <div class="user-text">
-              <div class="user-name">{{ user.nombre || user.email }}</div>
-              <div class="user-role">{{ roleLabel(user.rol) }}</div>
+      <ClientOnly>
+        <v-menu v-model="userMenu" offset-y transition="scale-transition">
+          <template #activator="{ props }">
+            <div class="user-info-trigger" v-bind="props">
+              <v-avatar size="40" class="avatar hover-scale">
+                <img v-if="avatarUrl" :src="avatarUrl" alt="avatar" width="40" />
+                <span v-else>{{ initials(user.nombre) }}</span>
+              </v-avatar>
+              <div class="user-text">
+                <div class="user-name">{{ user.nombre || user.email }}</div>
+                <div class="user-role">{{ roleLabel(user.rol) }}</div>
+              </div>
             </div>
-          </div>
-        </template>
+          </template>
 
-        <v-list>
-          <v-list-item v-if="isSupervisor" @click="router.push('/admin/notificaciones')">
-            <template #prepend><Icon name="mdi:bell-cog-outline" /></template>
-            <v-list-item-title>Notificaciones</v-list-item-title>
-          </v-list-item>
-          <v-list-item @click="router.push('/perfil')">
-            <v-list-item-title>Perfil</v-list-item-title>
-          </v-list-item>
-          <v-list-item @click="logout">
-            <v-list-item-title>Cerrar sesión</v-list-item-title>
-          </v-list-item>
-        </v-list>
-      </v-menu>
+          <v-list>
+            <v-list-item v-if="isAdmin" @click="router.push('/admin/notificaciones')">
+              <template #prepend><Icon name="mdi:bell-cog-outline" /></template>
+              <v-list-item-title>Notificaciones</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-if="isAdmin" @click="router.push('/admin/usuarios')">
+              <template #prepend><Icon name="mdi:account-cog-outline" /></template>
+              <v-list-item-title>Usuarios</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="router.push('/perfil')">
+              <v-list-item-title>Perfil</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="logout">
+              <v-list-item-title>Cerrar sesión</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+      </ClientOnly>
     </div>
 
     <!-- Overlay de búsqueda -->

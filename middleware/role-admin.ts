@@ -16,11 +16,14 @@ export default defineNuxtRouteMiddleware(async () => {
   }
 
   const role = (user.rol || '').toLowerCase()
-  const allowed =
-    role === 'admin' ||
-    role === 'jefe_comercial' ||
-    role.includes('vanes') ||
-    user.esSupervisor === true
+  const email = (user.email || '').toLowerCase()
+  const cfg = useRuntimeConfig().public
+  const adminEmails = String(cfg.adminEmails || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+
+  const allowed = role === 'admin' || adminEmails.includes(email)
 
   if (!user.isAuthenticated || !allowed) {
     return navigateTo('/')

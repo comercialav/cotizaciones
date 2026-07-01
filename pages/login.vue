@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth"
-import { useRouter } from "vue-router"
+import { useRouter, useRoute } from "vue-router"
 
 definePageMeta({ layout: "auth" })
 
@@ -10,6 +10,11 @@ const error = ref("")
 const loading = ref(false)
 
 const router = useRouter()
+const route = useRoute()
+
+if (route.query.inactive === '1') {
+  error.value = 'Tu usuario está desactivado. Contacta con administración.'
+}
 
 async function login() {
   const auth = getAuth()
@@ -17,9 +22,13 @@ async function login() {
   loading.value = true
   try {
     await signInWithEmailAndPassword(auth, email.value, password.value)
-    router.push("/") // redirige al dashboard tras login
+    router.push("/")
   } catch (err: any) {
-    error.value = "Usuario o contraseña incorrectos"
+    if (err?.code === 'auth/user-disabled') {
+      error.value = 'Tu usuario está desactivado. Contacta con administración.'
+    } else {
+      error.value = "Usuario o contraseña incorrectos"
+    }
     console.error(err)
   } finally {
     loading.value = false

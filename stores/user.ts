@@ -12,6 +12,7 @@ interface UserState {
   nombre: string | null
   rol: Role | null
   esSupervisor: boolean | null
+  activo: boolean
   loading: boolean
   authInitialized: boolean
   skipAnonymousReauth: boolean
@@ -31,6 +32,7 @@ export const useUserStore = defineStore("user", {
     nombre: null,
     rol: null,
     esSupervisor: null,
+    activo: true,
     loading: true,
     authInitialized: false,
     skipAnonymousReauth: false,
@@ -53,6 +55,21 @@ export const useUserStore = defineStore("user", {
     canAñadirArticulo(): boolean {
       return this.isSupervisor || this.isCompras
     },
+    canBorrarCotizacion(): boolean {
+      return this.isSupervisor || this.isCompras
+    },
+    isAdmin(state): boolean {
+      const email = (state.email || '').toLowerCase()
+      const cfg = useRuntimeConfig().public
+      const admins = String(cfg.adminEmails || '')
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean)
+      return state.rol === 'admin' || admins.includes(email)
+    },
+    canManageUsers(): boolean {
+      return this.isAdmin
+    },
   },
 
   actions: {
@@ -62,6 +79,7 @@ export const useUserStore = defineStore("user", {
       this.nombre = null
       this.rol = null
       this.esSupervisor = null
+      this.activo = true
     },
 
     async initUser(): Promise<void> {
@@ -109,10 +127,21 @@ export const useUserStore = defineStore("user", {
               const data: any = snap.docs[0].data()
               this.nombre = data.nombre || u?.displayName || emailRaw
               this.rol = normalizeRole(data.rol)
+              this.activo = data.activo !== false
               // Si el doc no trae esSupervisor, deriva por rol
               this.esSupervisor = (typeof data.esSupervisor === "boolean")
                 ? data.esSupervisor
                 : (this.rol === "jefe_comercial" || this.rol === "admin")
+
+              if (this.activo === false) {
+                this.skipAnonymousReauth = true
+                await signOut($auth as Auth)
+                this.clearProfile()
+                if (process.client) {
+                  await navigateTo('/login?inactive=1')
+                }
+                return
+              }
             } else {
               // Sin perfil: nombre opcional y rol inicial nulo
               this.nombre = u?.displayName || emailRaw

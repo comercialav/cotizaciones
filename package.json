@@ -21,6 +21,7 @@
     "algoliasearch": "^5.39.0",
     "apexcharts": "^5.3.3",
     "firebase": "^11.6.0",
+    "firebase-admin": "^14.1.0",
     "nodemailer": "^7.0.5",
     "nuxt": "^3.16.2",
     "vite-plugin-vuetify": "^2.1.1",

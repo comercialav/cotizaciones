@@ -2,6 +2,11 @@
 import { useUserStore } from "~/stores/user"
 
 const user = useUserStore()
+const hydrated = ref(false)
+
+onMounted(() => {
+  hydrated.value = true
+})
 </script>
 
 <template>
@@ -10,7 +15,7 @@ const user = useUserStore()
       <NuxtPage />
     </NuxtLayout>
 
-    <div v-if="user.loading" class="splash-loader">
+    <div v-if="hydrated && user.loading" class="splash-loader">
       <div class="loader-circle">
         <img src="/logo.png" alt="Logo Comercial AV" class="logo" />
       </div>

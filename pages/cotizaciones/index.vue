@@ -104,6 +104,8 @@ const pageCount = computed(() => {
 })
 
 const status  = ref<FiltroClave>('all')
+const fechaDesde = ref('')
+const fechaHasta = ref('')
 const norm = (s:any) =>
   String(s||'')
     .toLowerCase()
@@ -114,6 +116,31 @@ function matchesCliente(c: any, term: string) {
   const q = norm(term)
   if (!q) return true
   return norm(c?.cliente).includes(q)
+}
+
+function getCotizacionMs(c: any): number {
+  const ts = c.fechaCreacion || c.updatedAt || c.createdAt
+  if (!ts) return 0
+  if (typeof ts.toMillis === 'function') return ts.toMillis()
+  if (typeof ts.toDate === 'function') return ts.toDate().getTime()
+  const d = new Date(ts)
+  return isNaN(d.getTime()) ? 0 : d.getTime()
+}
+
+function matchesDate(c: any) {
+  const ms = getCotizacionMs(c)
+  if (!fechaDesde.value && !fechaHasta.value) return true
+  if (!ms) return false
+
+  if (fechaDesde.value) {
+    const start = new Date(`${fechaDesde.value}T00:00:00`).getTime()
+    if (ms < start) return false
+  }
+  if (fechaHasta.value) {
+    const end = new Date(`${fechaHasta.value}T23:59:59.999`).getTime()
+    if (ms > end) return false
+  }
+  return true
 }
 
 function applyStatusFilter(base: any[]) {
@@ -242,11 +269,14 @@ async function loadPage(forPage: number) {
   loading.value = true
   try {
     const qStr = search.value.trim()
+    const hasDateFilter = !!(fechaDesde.value || fechaHasta.value)
 
-    if (qStr) {
+    if (qStr || hasDateFilter) {
       const all = await fetchScopedCotizaciones()
-      const byCliente = all.filter(c => matchesCliente(c, qStr))
-      const filtered = applyStatusFilter(byCliente)
+      let filtered = all
+      if (qStr) filtered = filtered.filter(c => matchesCliente(c, qStr))
+      if (hasDateFilter) filtered = filtered.filter(matchesDate)
+      filtered = applyStatusFilter(filtered)
       const start = (forPage - 1) * perPage
       const slice = filtered.slice(start, start + perPage)
 
@@ -298,7 +328,7 @@ onMounted(() => {
 })
 
 // Cambios de filtros → reiniciar a página 1
-watch([status, selectedComercialUid], () => {
+watch([status, selectedComercialUid, fechaDesde, fechaHasta], () => {
   page.value = 1
   cursors.value = [null]
   loadPage(1)
@@ -329,6 +359,40 @@ watch(page, (p) => {
 function goNueva() {
   navigateTo('/cotizaciones/nueva')
 }
+
+function limpiarFechas() {
+  fechaDesde.value = ''
+  fechaHasta.value = ''
+}
+
+const canBorrarCotizacion = computed(() => user.canBorrarCotizacion)
+const showDelete = ref(false)
+const deleting = ref(false)
+const deleteError = ref('')
+const cotToDelete = ref<{ id: string; numero?: string; cliente?: string } | null>(null)
+
+function abrirEliminar(c: { id: string; numero?: string; cliente?: string }) {
+  deleteError.value = ''
+  cotToDelete.value = c
+  showDelete.value = true
+}
+
+async function confirmarEliminar() {
+  if (!cotToDelete.value?.id) return
+  deleteError.value = ''
+  deleting.value = true
+  try {
+    const { authFetch } = useAuthFetch()
+    await authFetch(`/api/cotizaciones/${cotToDelete.value.id}`, { method: 'DELETE' })
+    showDelete.value = false
+    cotToDelete.value = null
+    await loadPage(page.value)
+  } catch (e: any) {
+    deleteError.value = e?.data?.statusMessage || e?.message || 'No se pudo borrar la cotización'
+  } finally {
+    deleting.value = false
+  }
+}
 </script>
 
 <template>
@@ -346,73 +410,106 @@ function goNueva() {
       class="text-gray-500"
     />
 
-    <v-sheet class="action-bar mb-6" color="#f5f6f8" rounded="xl" elevation="1">
-      <div class="d-flex flex-wrap justify-space-between align-center ga-4">
-        <!-- Filtros izquierda -->
-        <div class="d-flex items-center gap-4">
-          <v-chip-group v-model="status" mandatory class="filter-tabs ms-3">
-            <v-chip value="all" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='all' }">
-              <Icon name="mdi:format-list-bulleted" class="me-2" /> Todas
-            </v-chip>
-            <v-chip value="Pendiente" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Pendiente' }">
-              <Icon name="mdi:progress-clock" class="me-2" /> Pendientes
-            </v-chip>
-            <v-chip value="SinRevisar" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='SinRevisar' }">
-              <Icon name="mdi:eye-off" class="me-2" /> Sin Revisar
-            </v-chip>
-            <v-chip value="Reabiertas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Reabiertas' }">
-              <Icon name="mdi:refresh" class="me-2" /> Reabiertas
-            </v-chip>
-            <v-chip value="Cotizadas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Cotizadas' }">
-              <Icon name="mdi:file-certificate" class="me-2" /> Cotizadas
-            </v-chip>
-            <v-chip value="Ganadas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Ganadas' }">
-              <Icon name="mdi:trophy" class="me-2" /> Ganadas
-            </v-chip>
-            <v-chip value="Perdidas" variant="text" class="filter-chip" :class="{ 'filter-chip--active': status==='Perdidas' }">
-              <Icon name="mdi:thumb-down" class="me-2" /> Perdidas
-            </v-chip>
-          </v-chip-group>
+    <section class="toolbar mb-6">
+      <!-- Fila 1: estados + acción principal -->
+      <div class="toolbar__row toolbar__row--top">
+        <v-chip-group v-model="status" mandatory class="seg" selected-class="seg__chip--active">
+          <v-chip value="all" variant="text" class="seg__chip">
+            <Icon name="mdi:format-list-bulleted" class="seg__icon" /> Todas
+          </v-chip>
+          <v-chip value="Pendiente" variant="text" class="seg__chip">
+            <Icon name="mdi:progress-clock" class="seg__icon" /> Pendientes
+          </v-chip>
+          <v-chip value="SinRevisar" variant="text" class="seg__chip">
+            <Icon name="mdi:eye-off" class="seg__icon" /> Sin revisar
+          </v-chip>
+          <v-chip value="Reabiertas" variant="text" class="seg__chip">
+            <Icon name="mdi:refresh" class="seg__icon" /> Reabiertas
+          </v-chip>
+          <v-chip value="Cotizadas" variant="text" class="seg__chip">
+            <Icon name="mdi:file-certificate" class="seg__icon" /> Cotizadas
+          </v-chip>
+          <v-chip value="Ganadas" variant="text" class="seg__chip">
+            <Icon name="mdi:trophy" class="seg__icon" /> Ganadas
+          </v-chip>
+          <v-chip value="Perdidas" variant="text" class="seg__chip">
+            <Icon name="mdi:thumb-down" class="seg__icon" /> Perdidas
+          </v-chip>
+        </v-chip-group>
 
-          <!-- Select de comercial (solo supervisora) -->
-          <v-select
-            v-if="isSupervisor"
-            v-model="selectedComercialUid"
-            :items="[{uid:null, nombre:'Todos'} as any, ...comerciales]"
-            item-title="nombre"
-            item-value="uid"
-            label="Filtrar por comercial"
-            variant="outlined"
-            density="comfortable"
-            hide-details
-            class="ms-3"
-            style="min-width: 260px;"
-          >
-            <template #prepend-inner>
-              <Icon name="mdi:account-tie" />
-            </template>
-          </v-select>
-        </div>
-
-        <!-- Buscador + acción -->
-        <div class="d-flex align-center justify-end ga-3 w-33">
-          <v-text-field
-            v-model="search"
-            variant="outlined"
-            density="compact"
-            placeholder="Buscar por nombre de cliente…"
-            hide-details
-            style="max-width: 300px"
-          >
-            <template #prepend-inner><Icon name="mdi:magnify" /></template>
-          </v-text-field>
-
-          <v-btn v-if="!user.isCompras" color="primary" rounded="lg" size="large" @click="goNueva">
-            Nueva cotización
-          </v-btn>
-        </div>
+        <v-btn
+          v-if="!user.isCompras"
+          color="primary"
+          rounded="lg"
+          class="toolbar__cta"
+          @click="goNueva"
+        >
+          <Icon name="mdi:plus" class="me-1" /> Nueva cotización
+        </v-btn>
       </div>
-    </v-sheet>
+
+      <v-divider class="toolbar__divider" />
+
+      <!-- Fila 2: búsqueda, fechas y comercial -->
+      <div class="toolbar__row toolbar__row--controls">
+        <v-text-field
+          v-model="search"
+          variant="outlined"
+          density="compact"
+          placeholder="Buscar por cliente…"
+          hide-details
+          class="ctrl ctrl--search"
+        >
+          <template #prepend-inner><Icon name="mdi:magnify" /></template>
+        </v-text-field>
+
+        <!-- Rango de fechas agrupado -->
+        <div class="daterange" :class="{ 'daterange--active': fechaDesde || fechaHasta }">
+          <Icon name="mdi:calendar-range" class="daterange__icon" />
+          <input
+            v-model="fechaDesde"
+            type="date"
+            class="daterange__input"
+            aria-label="Desde"
+          />
+          <span class="daterange__sep">→</span>
+          <input
+            v-model="fechaHasta"
+            type="date"
+            class="daterange__input"
+            :min="fechaDesde || undefined"
+            aria-label="Hasta"
+          />
+          <button
+            v-if="fechaDesde || fechaHasta"
+            type="button"
+            class="daterange__clear"
+            title="Limpiar fechas"
+            @click="limpiarFechas"
+          >
+            <Icon name="mdi:close" />
+          </button>
+        </div>
+
+        <!-- Select de comercial (solo supervisora) -->
+        <v-select
+          v-if="isSupervisor"
+          v-model="selectedComercialUid"
+          :items="[{uid:null, nombre:'Todos'} as any, ...comerciales]"
+          item-title="nombre"
+          item-value="uid"
+          placeholder="Comercial"
+          variant="outlined"
+          density="compact"
+          hide-details
+          class="ctrl ctrl--comercial"
+        >
+          <template #prepend-inner>
+            <Icon name="mdi:account-tie" />
+          </template>
+        </v-select>
+      </div>
+    </section>
 
     <!-- Loading -->
     <v-skeleton-loader
@@ -495,7 +592,17 @@ function goNueva() {
 
           <v-divider />
 
-          <v-card-actions class="justify-end">
+          <v-card-actions>
+            <v-btn
+              v-if="canBorrarCotizacion"
+              variant="text"
+              color="error"
+              @click.stop="abrirEliminar(c)"
+            >
+              <template #prepend><Icon name="mdi:delete-outline" /></template>
+              Eliminar
+            </v-btn>
+            <v-spacer />
             <NuxtLink :to="`/cotizaciones/${c.id}`">
               <v-btn variant="text" color="primary">Ver detalle</v-btn>
             </NuxtLink>
@@ -532,6 +639,29 @@ function goNueva() {
       </v-btn>
     </div>
 
+    <!-- Dialog ELIMINAR -->
+    <v-dialog v-model="showDelete" max-width="480" persistent>
+      <v-card>
+        <v-card-title class="text-h6">Eliminar cotización</v-card-title>
+        <v-card-text>
+          <p>
+            ¿Deseas eliminar la cotización
+            <strong>#{{ cotToDelete?.numero || '—' }}</strong>
+            de <strong>{{ cotToDelete?.cliente || '—' }}</strong>?
+          </p>
+          <p class="text-medium-emphasis mt-2 mb-0">Esta acción no se puede deshacer.</p>
+          <v-alert v-if="deleteError" type="error" variant="tonal" class="mt-4" density="compact">
+            {{ deleteError }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="deleting" @click="showDelete = false">Cancelar</v-btn>
+          <v-btn color="error" :loading="deleting" @click="confirmarEliminar">Eliminar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
@@ -545,13 +675,124 @@ function goNueva() {
   font-weight:700;color:#0f172a;background:#e5efff;border-radius:9999px;
 }
 .elev{ box-shadow: 0 2px 8px rgba(2, 6, 23, .12) }
-.action-bar { padding: 14px 18px; border: 1px solid #eceff3; }
-.filter-tabs { gap: 10px; }
-.filter-chip {
-  --chip-padding: 10px 12px;
-  padding: var(--chip-padding);
-  height: 38px; border-radius: 12px;
-  color: #6b7280; font-weight: 600; letter-spacing: .2px;
+
+/* ===== Toolbar de filtros ===== */
+.toolbar {
+  background: #ffffff;
+  border: 1px solid #e6e9ef;
+  border-radius: 18px;
+  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.05);
+  padding: 12px 14px;
 }
-.filter-chip--active { color: var(--v-primary-base, #1976d2); background: transparent; }
+.toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.toolbar__row--top {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.toolbar__divider {
+  margin: 12px 0;
+  opacity: .6;
+}
+.toolbar__row--controls {
+  flex-wrap: wrap;
+}
+.toolbar__cta {
+  flex-shrink: 0;
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: .2px;
+  height: 40px;
+}
+
+/* Segmented control de estados */
+.seg {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.seg :deep(.v-slide-group__content) {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.seg__chip {
+  height: 36px;
+  border-radius: 10px;
+  padding: 0 14px;
+  color: #64748b;
+  font-weight: 600;
+  letter-spacing: .1px;
+  transition: background-color .15s ease, color .15s ease;
+}
+.seg__chip:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.seg__chip--active {
+  background: #1976d2 !important;
+  color: #ffffff !important;
+  box-shadow: 0 3px 10px rgba(25, 118, 210, .28);
+}
+.seg__icon {
+  margin-right: 6px;
+  font-size: 17px;
+}
+
+/* Controles homogéneos */
+.ctrl :deep(.v-field) {
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.ctrl--search { flex: 1 1 260px; min-width: 220px; max-width: 380px; }
+.ctrl--comercial { flex: 0 1 240px; min-width: 200px; }
+
+/* Rango de fechas como una sola unidad */
+.daterange {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.daterange--active {
+  border-color: #1976d2;
+  box-shadow: 0 0 0 3px rgba(25, 118, 210, .12);
+}
+.daterange__icon { font-size: 18px; color: #64748b; }
+.daterange__input {
+  border: none;
+  background: transparent;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+  color: #0f172a;
+  width: 118px;
+  color-scheme: light;
+}
+.daterange__sep { color: #94a3b8; font-size: 13px; }
+.daterange__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  color: #64748b;
+  transition: background-color .15s ease, color .15s ease;
+}
+.daterange__clear:hover { background: #e2e8f0; color: #0f172a; }
+
+@media (max-width: 720px) {
+  .toolbar__row--controls .ctrl--search,
+  .toolbar__row--controls .ctrl--comercial,
+  .daterange { flex: 1 1 100%; width: 100%; }
+  .daterange { justify-content: space-between; }
+  .daterange__input { width: auto; flex: 1; }
+}
 </style>
