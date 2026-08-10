@@ -4,10 +4,15 @@ import { sendSlackDM } from '~/server/utils/slack'
 import { canSendSlack } from '~/utils/notificaciones'
 
 export default defineEventHandler(async (event) => {
-  const { toEmail, text, ccEmail, blocks, event: eventKey } = await readBody(event)
+  const { toEmail, text, ccEmail, ccEmails, blocks, event: eventKey } = await readBody(event)
   if (!toEmail || !text) {
     throw createError({ statusCode: 400, statusMessage: 'toEmail y text son obligatorios' })
   }
+
+  const ccList = [
+    ...(Array.isArray(ccEmails) ? ccEmails : []),
+    ...(ccEmail ? [ccEmail] : []),
+  ].filter((e, i, arr) => e && arr.indexOf(e) === i)
 
   const notifCfg = await getNotificacionesConfig()
   const slackEvent = String(eventKey || '').trim()
@@ -23,10 +28,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 502, statusMessage: `Slack: ${result.error}` })
   }
 
-  // CC opcional (no bloquea ni falla la petición principal)
-  if (ccEmail) {
-    const cc = await sendSlackDM({ toEmail: ccEmail, text, blocks })
-    if (!cc.ok) console.error('CC Slack falló:', cc.error)
+  for (const cc of ccList) {
+    if (cc === toEmail) continue
+    const ccResult = await sendSlackDM({ toEmail: cc, text, blocks })
+    if (!ccResult.ok) console.error('CC Slack falló:', cc, ccResult.error)
   }
 
   return { ok: true }

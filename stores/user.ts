@@ -16,6 +16,8 @@ interface UserState {
   loading: boolean
   authInitialized: boolean
   skipAnonymousReauth: boolean
+  /** UIDs que pueden aparecer en cotizaciones (auth, legacy, doc id) */
+  scopeUids: string[]
 }
 
 function normalizeRole(r: any): Role {
@@ -36,6 +38,7 @@ export const useUserStore = defineStore("user", {
     loading: true,
     authInitialized: false,
     skipAnonymousReauth: false,
+    scopeUids: [],
   }),
 
   getters: {
@@ -47,7 +50,8 @@ export const useUserStore = defineStore("user", {
     },
     isCompras(state): boolean {
       const mail = state.email?.toLowerCase() || ""
-      return state.rol === "compras" || mail === "compras@comercialav.com"
+      const rol = (state.rol || "").toLowerCase()
+      return rol === "compras" || mail === "compras@comercialav.com"
     },
     canEditarCoste(): boolean {
       return this.isSupervisor || this.isCompras
@@ -56,6 +60,10 @@ export const useUserStore = defineStore("user", {
       return this.isSupervisor || this.isCompras
     },
     canBorrarCotizacion(): boolean {
+      return this.isSupervisor || this.isCompras
+    },
+    /** Aviso «pendiente de compras» solo para supervisora y compras */
+    canVerPendienteCompras(): boolean {
       return this.isSupervisor || this.isCompras
     },
     isAdmin(state): boolean {
@@ -80,6 +88,7 @@ export const useUserStore = defineStore("user", {
       this.rol = null
       this.esSupervisor = null
       this.activo = true
+      this.scopeUids = []
     },
 
     async initUser(): Promise<void> {
@@ -124,10 +133,17 @@ export const useUserStore = defineStore("user", {
             }
 
             if (!snap.empty) {
-              const data: any = snap.docs[0].data()
+              const docSnap = snap.docs[0]
+              const data: any = docSnap.data()
               this.nombre = data.nombre || u?.displayName || emailRaw
               this.rol = normalizeRole(data.rol)
               this.activo = data.activo !== false
+              const scope = new Set<string>()
+              if (u?.uid) scope.add(u.uid)
+              if (data.authUid) scope.add(String(data.authUid))
+              if (data.uid) scope.add(String(data.uid))
+              scope.add(docSnap.id)
+              this.scopeUids = [...scope].filter(Boolean)
               // Si el doc no trae esSupervisor, deriva por rol
               this.esSupervisor = (typeof data.esSupervisor === "boolean")
                 ? data.esSupervisor
@@ -147,6 +163,7 @@ export const useUserStore = defineStore("user", {
               this.nombre = u?.displayName || emailRaw
               this.rol = null
               this.esSupervisor = null
+              this.scopeUids = u?.uid ? [u.uid] : []
             }
 
             // Fallback específico para compras por email, sin romper datos existentes

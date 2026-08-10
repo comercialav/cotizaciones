@@ -23,4 +23,5 @@ logs
 .env.*
 !.env.example
 vacio/
+public/tinymce/
 firebase-service-account.json

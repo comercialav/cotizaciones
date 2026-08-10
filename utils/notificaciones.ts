@@ -28,7 +28,7 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     label: 'Nueva solicitud de cotización',
     description: 'Avisa de que se ha creado una cotización nueva y hay que revisarla.',
     when: 'Al guardar una cotización en «Nueva cotización»',
-    recipients: 'Comercial y supervisor. Si no hay stock, también compras.',
+    recipients: 'Comercial y supervisor. Compras en copia si sin stock o stock parcial.',
     channels: { email: true, slack: false },
     group: 'cotizacion',
   },
@@ -37,7 +37,7 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     label: 'Cotización cerrada / recotizada',
     description: 'Confirma que la cotización ya tiene precios y está lista para el comercial.',
     when: 'Cuando el supervisor confirma la cotización o una recotización',
-    recipients: 'Comercial asignado y supervisor',
+    recipients: 'Comercial asignado y supervisor.',
     channels: { email: true, slack: true },
     group: 'cotizacion',
   },
@@ -46,7 +46,7 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     label: 'Cotización ganada',
     description: 'Informa de que el cliente ha confirmado la compra.',
     when: 'Cuando el comercial marca la cotización como ganada',
-    recipients: 'Comercial y supervisor',
+    recipients: 'Comercial y supervisor. Compras en copia.',
     channels: { email: true, slack: true },
     group: 'cotizacion',
   },
@@ -55,7 +55,7 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     label: 'Cotización perdida',
     description: 'Informa de que la oportunidad no se ha cerrado a favor.',
     when: 'Cuando el comercial marca la cotización como perdida',
-    recipients: 'Comercial y supervisor',
+    recipients: 'Comercial y supervisor. Compras en copia.',
     channels: { email: true, slack: true },
     group: 'cotizacion',
   },
@@ -64,7 +64,7 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     label: 'Comentario privado',
     description: 'Comunicación restringida entre supervisor, compras y comercial.',
     when: 'Al publicar un comentario con visibilidad privada',
-    recipients: 'Email → compras (desde supervisor). Slack → supervisor (desde compras/comercial).',
+    recipients: 'Email → compras (desde supervisor). Slack → supervisor (desde compras/comercial). Incluye nº de cotización y cliente.',
     channels: { email: true, slack: true },
     group: 'comentarios',
   },
@@ -73,7 +73,7 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     label: 'Comentario público',
     description: 'Mensaje visible para todos los roles con acceso a la cotización.',
     when: 'Al publicar un comentario público en el chat',
-    recipients: 'La contraparte del hilo (comercial ↔ supervisor)',
+    recipients: 'La contraparte del hilo (comercial ↔ supervisor). Incluye nº de cotización y cliente.',
     channels: { email: false, slack: true },
     group: 'comentarios',
   },
@@ -82,14 +82,14 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     label: 'Solicitud de recotización',
     description: 'El comercial pide revisar precios de una cotización ya cerrada.',
     when: 'Al pulsar «Solicitar recotización»',
-    recipients: 'Supervisor (email y Slack)',
+    recipients: 'Supervisor (email y Slack). Compras en copia.',
     channels: { email: true, slack: true },
     group: 'gestion',
   },
   {
     id: 'workflow',
     label: 'Cambio de estado interno',
-    description: 'En revisión, consultando proveedor o a la espera del cliente.',
+    description: 'En revisión, consultando proveedor/compras o a la espera del cliente.',
     when: 'Al cambiar el workflow de la cotización',
     recipients: 'Comercial o supervisor según quién actúe',
     channels: { email: false, slack: true },
@@ -120,6 +120,15 @@ export const NOTIF_EVENT_DEFS: NotifEventMeta[] = [
     when: 'Al guardar un precio cotizado inline',
     recipients: 'Comercial asignado',
     channels: { email: false, slack: true },
+    group: 'gestion',
+  },
+  {
+    id: 'participante_anadido',
+    label: 'Participante añadido',
+    description: 'Avisa a un comercial de que puede seguir una cotización ajena.',
+    when: 'Cuando la supervisora añade un participante a la cotización',
+    recipients: 'Comercial añadido como participante.',
+    channels: { email: true, slack: true },
     group: 'gestion',
   },
   {
@@ -177,9 +186,45 @@ export function canSendSlack(cfg: NotificacionesConfig, eventId: string): boolea
   return cfg.events[eventId]?.slack ?? false
 }
 
+/** Referencia legible: #COT-2026-07-004 – Cliente S.L. */
+export function formatCotizacionRef(input: {
+  numero?: string | null
+  cliente?: string | null
+  cotizacionId?: string | null
+  articulo?: string | null
+}): string {
+  const num = input.numero?.trim()
+  const numLabel = num ? `#${num}` : input.cotizacionId ? `#${input.cotizacionId}` : '—'
+  const cliente = input.cliente?.trim() || '—'
+  let ref = `${numLabel} – ${cliente}`
+  const art = input.articulo?.trim()
+  if (art && art !== '—') ref += ` · art. «${art}»`
+  return ref
+}
+
+export function formatComentarioNotifText(input: {
+  privado?: boolean
+  autor?: string | null
+  texto?: string | null
+  attachment?: unknown
+  numero?: string | null
+  cliente?: string | null
+  cotizacionId?: string | null
+  articulo?: string | null
+}): string {
+  const ref = formatCotizacionRef(input)
+  const cuerpo = input.texto?.trim()
+    || (input.attachment ? '(adjunto)' : '(sin texto)')
+  if (input.privado) {
+    return `💬 Comentario privado · Cotización ${ref}: «${cuerpo}»`
+  }
+  const autor = input.autor?.trim() || 'Usuario'
+  return `💬 ${autor} comentó · Cotización ${ref}: «${cuerpo}»`
+}
+
 export function actionToEventId(action: string): string {
   const a = action.toLowerCase()
   if (a === 'solicitud' || a === 'solicitud_cotizacion') return 'solicitud'
-  if (a === 'comentario_privado') return 'comentario_privado'
+  if (a === 'comentario_privado' || a === 'comentario_privado_supervisor') return 'comentario_privado'
   return a
 }

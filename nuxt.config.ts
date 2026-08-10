@@ -9,16 +9,24 @@ export default defineNuxtConfig({
   css: ['vuetify/styles'],
 
   build: {
-    transpile: ['vuetify'],              // ← importante
+    transpile: ['vuetify'],
   },
   vite: {
-    ssr: { noExternal: ['vuetify'] },    // ← importante
-    plugins: [vuetify({ autoImport: true })], // ← importante
+    ssr: { noExternal: ['vuetify'] },
+    plugins: [vuetify({ autoImport: true })],
   },
 
   app: {
     head: {
       meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1' }],
+      link: [
+        // Precarga TinyMCE para que esté disponible en navegación SPA sin reload
+        { rel: 'preload', as: 'script', href: '/tinymce/tinymce.min.js' },
+      ],
+      script: [
+        // Carga TinyMCE globalmente una sola vez al arrancar la app
+        { src: '/tinymce/tinymce.min.js', defer: true },
+      ],
     },
   },
 

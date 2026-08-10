@@ -2,6 +2,7 @@
 import { promises as fs } from "fs"
 import path from "path"
 import nodemailer from "nodemailer"
+import type { StockEstado } from '~/utils/stock'
 
 /* ===========================
  * Helpers de plantillas
@@ -30,16 +31,23 @@ export async function renderTemplate(templateName: string, data: Record<string, 
 }
 
 /** Genera tabla sencilla (solicitud de cotización) */
-export function renderItemsTable(articulos: any[] = [], stockDisponible?: boolean) {
+export function renderItemsTable(articulos: any[] = [], stockEstadoOrLegacy?: boolean | StockEstado) {
   const th = (t:string)=>`<th align="right" style="padding:8px 6px;border-bottom:1px solid #eeeef0;">${t}</th>`
   const td = (v:string, right=true)=>`<td ${right?'align="right"':''} style="padding:8px 6px;border-bottom:1px solid #eeeef0;">${v}</td>`
+
+  const sinStock = stockEstadoOrLegacy === false || stockEstadoOrLegacy === 'sin_stock'
+  const parcial = stockEstadoOrLegacy === 'parcial'
 
   const rows = (articulos||[]).map(a=>{
     const u = Number(a.unidades||0)
     const pCliente = Number(a.precioCliente||0)
     const pSolic = a.precioSolicitado!=null ? Number(a.precioSolicitado) : null
+    const compradoAnt = a.compradoAntes ? 'Sí' : 'No'
+    const pAnt = a.compradoAntes && a.precioAnterior != null
+      ? `€ ${Number(a.precioAnterior).toFixed(2)}`
+      : '—'
 
-    const noStockBadge = stockDisponible === false
+    const noStockBadge = sinStock
       ? `<span style="
             background:#facc15;
             color:#1f2937;
@@ -49,7 +57,17 @@ export function renderItemsTable(articulos: any[] = [], stockDisponible?: boolea
             font-weight:600;
             margin-left:8px;
           ">No hay stock</span>`
-      : ""
+      : parcial
+        ? `<span style="
+            background:#fed7aa;
+            color:#9a3412;
+            padding:2px 6px;
+            border-radius:6px;
+            font-size:12px;
+            font-weight:600;
+            margin-left:8px;
+          ">Stock parcial</span>`
+        : ""
 
     return `
     <tr>
@@ -60,6 +78,8 @@ export function renderItemsTable(articulos: any[] = [], stockDisponible?: boolea
       ${td(String(u))}
       ${td(`€ ${pCliente.toFixed(2)}`)}
       ${td(pSolic!=null ? `€ ${pSolic.toFixed(2)}` : "—")}
+      ${td(compradoAnt)}
+      ${td(pAnt)}
       ${td(`€ ${(u * (pSolic ?? 0)).toFixed(2)}`)}
     </tr>`
   }).join("")
@@ -72,6 +92,8 @@ export function renderItemsTable(articulos: any[] = [], stockDisponible?: boolea
         ${th('Unid.')}
         ${th('Precio cliente')}
         ${th('Precio solicitado')}
+        ${th('Compra ant.')}
+        ${th('Precio ant.')}
         ${th('Total')}
       </tr>
     </thead>
@@ -91,6 +113,10 @@ export function renderCotizadaTable(articulos: any[] = []) {
     const pSol = a.precioSolicitado!=null ? Number(a.precioSolicitado) : null
     const pComp= a.precioCompetencia!=null ? Number(a.precioCompetencia) : null
     const pCot = a.precioCotizado!=null ? Number(a.precioCotizado) : null
+    const compradoAnt = a.compradoAntes ? 'Sí' : 'No'
+    const pAnt = a.compradoAntes && a.precioAnterior != null
+      ? `€ ${Number(a.precioAnterior).toFixed(2)}`
+      : '—'
     return `
     <tr>
       <td style="padding:8px 6px;border-bottom:1px solid #eeeef0;">
@@ -102,6 +128,8 @@ export function renderCotizadaTable(articulos: any[] = []) {
       ${td(pSol!=null ? `€ ${pSol.toFixed(2)}` : "—")}
       ${td(pComp!=null ? `€ ${pComp.toFixed(2)}` : "—")}
       ${td(pCot!=null ? `€ ${pCot.toFixed(2)}` : "—")}
+      ${td(compradoAnt)}
+      ${td(pAnt)}
       ${td(`€ ${(u*pTar).toFixed(2)}`)}
       ${td(pCot!=null ? `€ ${(u*pCot).toFixed(2)}` : "—")}
     </tr>`
@@ -116,6 +144,8 @@ export function renderCotizadaTable(articulos: any[] = []) {
         ${th('Solicitado')}
         ${th('Competencia')}
         ${th('Cotizado')}
+        ${th('Compra ant.')}
+        ${th('Precio ant.')}
         ${th('Total (tarifa)')}
         ${th('Total (cotizado)')}
       </tr>

@@ -2,11 +2,15 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  doc, getDoc, setDoc, updateDoc, collection, addDoc, serverTimestamp
+  doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, getDocs, serverTimestamp
 } from 'firebase/firestore'
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { useUserStore } from '~/stores/user'
-import CotizacionForm from '~/components/CotizacionForm.vue'
+import { normalizeStockEstado, stockDisponibleLegacy, shouldResetComprasAtendido } from '~/utils/stock'
+import { cotizacionCompradoAntes, mergeArticuloEdicion, articuloLabel } from '~/utils/articulos'
+import { tarifaLabel } from '~/utils/tarifas'
+import { workflowLabel } from '~/utils/workflow'
+import { puedeActuarComercialEnCotizacion, isCotizacionOwner } from '~/utils/cotizacion-access'
 
 const { $db, $storage, $auth } = useNuxtApp()
 const route = useRoute()
@@ -28,25 +32,98 @@ const saving  = ref(false)
 const errorMsg = ref<string>('')
 
 const cot = ref<any | null>(null)
+const supervisorEmail = ref<string | null>(null)
 
 const isVanessaOrAdmin = computed(() => {
   const r = (user.rol || '').toLowerCase()
-  return r === 'admin' || r.includes('vanes')
+  return r === 'admin' || r.includes('vanes') || r === 'jefe_comercial'
 })
-const isOwner = computed(() => {
-  const vendedorUid = cot.value?.vendedor?.uid || cot.value?.vendedorUid
-  return Boolean(user.uid && vendedorUid && user.uid === vendedorUid)
-})
-const canEdit = computed(() => isVanessaOrAdmin.value || isOwner.value)
+const puedeActuarComercial = computed(() => puedeActuarComercialEnCotizacion(user, cot.value))
+const isSoloParticipante = computed(() =>
+  puedeActuarComercial.value && !isCotizacionOwner(user.uid, cot.value, user.email),
+)
+const isCotizada = computed(() => (cot.value?.workflow || '').toLowerCase() === 'cotizado')
+const isGanada = computed(() => (cot.value?.estado || '').toLowerCase() === 'ganada')
+const isPerdida = computed(() => (cot.value?.estado || '').toLowerCase() === 'perdida')
+const isAplazada = computed(() => (cot.value?.estado || '').toLowerCase() === 'aplazada')
+const cotizacionAbierta = computed(() => !isCotizada.value && !isGanada.value && !isPerdida.value && !isAplazada.value)
+const canEditArticulos = computed(() =>
+  (puedeActuarComercial.value || user.isCompras) && cotizacionAbierta.value,
+)
+/** Comercial o participante: edición completa con reapertura al guardar */
+const canEditComercialFull = computed(() =>
+  puedeActuarComercial.value && !user.isCompras && !isVanessaOrAdmin.value && cotizacionAbierta.value,
+)
+const articulosOnlyMode = computed(() => user.isCompras && canEditArticulos.value)
+const canEditFull = computed(() =>
+  (isVanessaOrAdmin.value || canEditComercialFull.value) && cotizacionAbierta.value,
+)
+const canAccess = computed(() => canEditFull.value || articulosOnlyMode.value)
+
+async function loadSupervisor() {
+  const q1 = query(collection($db, 'usuarios'), where('rol', '==', 'jefe_comercial'))
+  const s1 = await getDocs(q1)
+  if (s1.docs.length) {
+    supervisorEmail.value = s1.docs[0].data().email || null
+    return
+  }
+  const q2 = query(collection($db, 'usuarios'), where('esSupervisor', '==', true))
+  const s2 = await getDocs(q2)
+  supervisorEmail.value = s2.docs[0]?.data()?.email || 'vanessa@comercialav.com'
+}
+
+async function notifySlack(text: string, event: string) {
+  try {
+    const toEmail = supervisorEmail.value || cot.value?.vendedor?.email
+    if (!toEmail) return
+    await $fetch('/api/slack/dm', { method: 'POST', body: { toEmail, text, event } })
+  } catch (e: any) {
+    console.error('[EDIT] Slack error:', e?.data || e)
+  }
+}
+
+function diffArticulos(antes: any[], despues: any[]) {
+  const lines: string[] = []
+  const max = Math.max(antes.length, despues.length)
+  for (let i = 0; i < max; i++) {
+    const a = antes[i]
+    const d = despues[i]
+    if (!a && d) {
+      lines.push(`➕ Añadido “${articuloLabel(d)}” (${d.unidades} uds)`)
+      continue
+    }
+    if (a && !d) {
+      lines.push(`➖ Eliminado “${articuloLabel(a)}”`)
+      continue
+    }
+    if (!a || !d) continue
+    const changes: string[] = []
+    if ((a.codigoProducto || '') !== (d.codigoProducto || '')) {
+      changes.push(`código “${a.codigoProducto || '—'}” → “${d.codigoProducto || '—'}”`)
+    }
+    if ((a.descripcionProducto || '') !== (d.descripcionProducto || '')) {
+      changes.push(`descripción actualizada`)
+    }
+    if (a.articulo !== d.articulo && !changes.length) changes.push(`nombre “${a.articulo}” → “${d.articulo}”`)
+    if (Number(a.unidades) !== Number(d.unidades)) changes.push(`uds ${a.unidades} → ${d.unidades}`)
+    if (Number(a.precioCliente) !== Number(d.precioCliente)) changes.push(`tarifa €${a.precioCliente} → €${d.precioCliente}`)
+    if (Number(a.precioSolicitado ?? -1) !== Number(d.precioSolicitado ?? -1)) {
+      changes.push(`solicitado €${a.precioSolicitado ?? '—'} → €${d.precioSolicitado ?? '—'}`)
+    }
+    if (Number(a.precioCoste ?? -1) !== Number(d.precioCoste ?? -1)) {
+      changes.push(`coste €${a.precioCoste ?? '—'} → €${d.precioCoste ?? '—'}`)
+    }
+    if ((a.proveedor || '') !== (d.proveedor || '')) {
+      changes.push(`proveedor "${a.proveedor || '—'}" → "${d.proveedor || '—'}"`)
+    }
+    if ((a.url || '') !== (d.url || '')) changes.push('URL actualizada')
+    if (changes.length) lines.push(`✏️ “${articuloLabel(d)}”: ${changes.join(', ')}`)
+  }
+  return lines
+}
 
 function fmtWorkflow(w?: string) {
-  const map: Record<string, string> = {
-    en_revision: 'En revisión',
-    consultando: 'Consultando',
-    espera_cliente: 'Espera cliente',
-    cotizado: 'Cotizada',
-  }
-  return map[(w || '').toLowerCase()] || w || '—'
+  return workflowLabel(w)
 }
 
 async function load() {
@@ -70,12 +147,81 @@ function cleanData(obj: any) {
   return Object.fromEntries(Object.entries(obj).filter(([_, v]) => v !== undefined))
 }
 
+async function onSubmitArticulosOnly(nuevosArticulos: any[]) {
+  const now = serverTimestamp()
+  const antes = cot.value?.articulos || []
+  const articulosGuardados = nuevosArticulos.map((line, i) =>
+    mergeArticuloEdicion(antes[i], line),
+  )
+  const cambios = diffArticulos(antes, articulosGuardados)
+
+  await updateDoc(doc($db, 'cotizaciones', id.value), {
+    articulos: articulosGuardados,
+    updatedAt: now,
+    ...(user.isCompras ? {
+      comprasAtendidoAt: now,
+      comprasRespondio: true,
+      comprasAtendidoPor: { uid: user.uid, nombre: user.nombre, email: user.email, rol: user.rol },
+    } : {}),
+  })
+
+  const stamp = new Intl.DateTimeFormat('es-ES', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date())
+
+  const rolLabel = user.isCompras ? 'Compras' : (user.nombre || 'Comercial')
+  const detalle = cambios.length
+    ? cambios.map(c => `• ${c}`).join('\n')
+    : '• Sin cambios detectados en las líneas'
+
+  const texto = `✏️ ${rolLabel} modificó artículos (${stamp}):\n${detalle}`
+
+  // Los cambios de coste/proveedor son sensibles: ocultar a comerciales
+  const contieneDatosSensibles = /coste €|proveedor "/i.test(texto)
+
+  await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
+    fecha: now,
+    tipo: 'actividad',
+    ...(contieneDatosSensibles ? { visibilidad: 'privado' } : {}),
+    author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
+    texto,
+  })
+
+  const ref = `#${cot.value?.numero || id.value} – ${cot.value?.cliente || ''}`
+  await notifySlack(
+    `${texto.replace(/\n/g, ' ')} en la cotización ${ref}.`,
+    'articulos_editados',
+  )
+
+  await navigateTo(detailUrl.value)
+}
+
 async function onSubmit(payload: any) {
   const data = payload?.data
   const attachments: File[] = Array.isArray(payload?.attachments) ? payload.attachments : []
 
   if (!cot.value) return
-  if (!canEdit.value) {
+  if (!canAccess.value) {
+    errorMsg.value = 'No tienes permisos para editar esta cotización.'
+    return
+  }
+
+  if (articulosOnlyMode.value) {
+    saving.value = true
+    errorMsg.value = ''
+    try {
+      await onSubmitArticulosOnly(data.articulos || [])
+    } catch (e: any) {
+      console.error('[EDIT] error guardando artículos', e)
+      errorMsg.value = e?.message || 'Error guardando artículos'
+    } finally {
+      saving.value = false
+    }
+    return
+  }
+
+  if (!canEditFull.value) {
     errorMsg.value = 'No tienes permisos para editar esta cotización.'
     return
   }
@@ -98,6 +244,7 @@ async function onSubmit(payload: any) {
         cliente: cot.value.cliente,
         tarifa: cot.value.tarifa,
         articulos: cot.value.articulos,
+        stockEstado: cot.value.stockEstado || normalizeStockEstado(cot.value),
         stockDisponible: cot.value.stockDisponible,
         licitacion: cot.value.licitacion,
         clienteFinal: cot.value.clienteFinal || null,
@@ -107,9 +254,9 @@ async function onSubmit(payload: any) {
         condicionesEspeciales: cot.value.condicionesEspeciales || null,
         plazoEntrega: cot.value.plazoEntrega || null,
         lugarEntrega: cot.value.lugarEntrega || null,
+        tipoEntrega: cot.value.tipoEntrega || null,
         comentarioStock: cot.value.comentarioStock || null,
         compradoAntes: (cot.value.compradoAntes ?? false),
-        precioAnterior: (cot.value.precioAnterior ?? null),
         fechaDecision: (cot.value.fechaDecision ?? null),
         estado: cot.value.estado,
         workflow: cot.value.workflow || null,
@@ -118,11 +265,15 @@ async function onSubmit(payload: any) {
     })
     await setDoc(doc($db, 'cotizaciones', id.value, 'versiones', String(nextVersion)), snapshotDoc)
 
+    const prevEstado = normalizeStockEstado(cot.value)
+    const nextEstado = normalizeStockEstado(data)
+
     const updatePayload = cleanData({
       cliente: data.cliente,
       tarifa: data.tarifa,
       articulos: data.articulos,
-      stockDisponible: data.stockDisponible,
+        stockEstado: nextEstado,
+        stockDisponible: stockDisponibleLegacy(nextEstado),
       licitacion: data.licitacion,
       clienteFinal: data.clienteFinal || null,
       comentariosCliente: data.comentariosCliente || null,
@@ -130,14 +281,19 @@ async function onSubmit(payload: any) {
       condicionesEspeciales: data.condicionesEspeciales || null,
       plazoEntrega: data.plazoEntrega || null,
       lugarEntrega: data.lugarEntrega || null,
+      tipoEntrega: data.tipoEntrega || null,
       comentarioStock: data.comentarioStock || null,
-      compradoAntes: data.compradoAntes,
-      precioAnterior: (data.precioAnterior ?? null),
+      compradoAntes: cotizacionCompradoAntes(data.articulos || []),
       fechaDecision: (data.fechaDecision ?? null),
       estado: 'reabierta',
       workflow: 'en_revision',
       version: nextVersion,
-      updatedAt: now
+      updatedAt: now,
+      ...(shouldResetComprasAtendido(prevEstado, nextEstado) ? {
+        comprasAtendidoAt: null,
+        comprasAtendidoPor: null,
+        comprasRespondio: null,
+      } : {}),
     })
     await updateDoc(doc($db, 'cotizaciones', id.value), updatePayload)
 
@@ -164,7 +320,9 @@ async function onSubmit(payload: any) {
       fecha: now,
       tipo: 'actividad',
       author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
-      texto: 'El comercial ha editado la cotización. Se reabre para revisión.'
+      texto: isSoloParticipante.value
+        ? `${user.nombre} (participante) editó la cotización. Se reabre para revisión.`
+        : 'El comercial ha editado la cotización. Se reabre para revisión.',
     })
 
     await navigateTo(detailUrl.value)
@@ -176,7 +334,10 @@ async function onSubmit(payload: any) {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await loadSupervisor()
+  await load()
+})
 </script>
 
 <template>
@@ -205,7 +366,7 @@ onMounted(load)
               <Icon name="mdi:chevron-right" class="breadcrumb-sep" />
               <NuxtLink :to="detailUrl" class="breadcrumb-link">{{ cot.cliente }}</NuxtLink>
               <Icon name="mdi:chevron-right" class="breadcrumb-sep" />
-              <span class="breadcrumb-current">Editar</span>
+              <span class="breadcrumb-current">{{ articulosOnlyMode ? 'Artículos' : 'Editar' }}</span>
             </nav>
 
             <div class="page-header__shell">
@@ -215,7 +376,9 @@ onMounted(load)
                     <Icon name="mdi:file-document-edit-outline" />
                   </div>
                   <div class="page-header__copy">
-                    <p class="page-header__eyebrow">Edición de cotización</p>
+                    <p class="page-header__eyebrow">
+                      {{ articulosOnlyMode ? 'Edición de artículos' : 'Edición de cotización' }}
+                    </p>
                     <h1 class="page-header__title">{{ cot.cliente }}</h1>
                     <p v-if="cot.numero" class="page-header__ref">{{ cot.numero }}</p>
                   </div>
@@ -245,7 +408,7 @@ onMounted(load)
               <div class="page-header__meta">
                 <span class="meta-chip">
                   <Icon name="mdi:tag-outline" />
-                  Tarifa {{ cot.tarifa || '—' }}
+                  {{ tarifaLabel(cot.tarifa) }}
                 </span>
                 <span class="meta-chip">
                   <Icon name="mdi:source-branch" />
@@ -262,38 +425,68 @@ onMounted(load)
               </div>
 
               <div class="page-header__notices">
-                <div class="header-notice">
-                  <span class="header-notice__icon header-notice__icon--amber">
-                    <Icon name="mdi:refresh-circle" />
-                  </span>
-                  <p class="header-notice__text">
-                    Al guardar, la cotización se reabrirá y volverá a
-                    <strong>En revisión</strong> para que el supervisor la valide.
-                  </p>
-                </div>
-                <div class="header-notice">
+                <div v-if="articulosOnlyMode" class="header-notice">
                   <span class="header-notice__icon header-notice__icon--blue">
-                    <Icon name="mdi:lock-outline" />
+                    <Icon name="mdi:cube-outline" />
                   </span>
                   <p class="header-notice__text">
-                    Los artículos originales están bloqueados. Puedes ajustar precios solicitados,
-                    añadir líneas nuevas o actualizar la información complementaria.
+                    Puedes modificar, añadir o eliminar artículos mientras la cotización
+                    <strong>no esté cerrada</strong>. Los cambios quedarán registrados en el chat.
                   </p>
                 </div>
+                <template v-else-if="canEditFull">
+                  <div v-if="canEditComercialFull" class="header-notice">
+                    <span class="header-notice__icon header-notice__icon--indigo">
+                      <Icon name="mdi:account-group-outline" />
+                    </span>
+                    <p class="header-notice__text">
+                      <template v-if="isSoloParticipante">
+                        Estás editando como <strong>participante</strong> mientras el vendedor no está disponible.
+                      </template>
+                      <template v-else>
+                        Puedes corregir la cotización completa antes de que se cierre.
+                      </template>
+                    </p>
+                  </div>
+                  <div class="header-notice">
+                    <span class="header-notice__icon header-notice__icon--amber">
+                      <Icon name="mdi:refresh-circle" />
+                    </span>
+                    <p class="header-notice__text">
+                      Al guardar, la cotización se reabrirá y volverá a
+                      <strong>En revisión</strong> para que el supervisor la valide.
+                    </p>
+                  </div>
+                  <div class="header-notice">
+                    <span class="header-notice__icon header-notice__icon--blue">
+                      <Icon name="mdi:cube-edit-outline" />
+                    </span>
+                    <p class="header-notice__text">
+                      Puedes corregir cualquier artículo (nombre, unidades, precios),
+                      añadir líneas nuevas o actualizar la información complementaria.
+                    </p>
+                  </div>
+                </template>
               </div>
             </div>
           </header>
 
-          <v-alert v-if="!canEdit" type="warning" variant="tonal" class="mb-4 permission-alert">
-            No tienes permisos para editar esta cotización (solo el comercial asignado o Vanessa/Admin).
+          <v-alert v-if="isCotizada || isGanada || isPerdida || isAplazada" type="info" variant="tonal" class="mb-4 permission-alert">
+            Esta cotización ya está cerrada. No se pueden modificar los artículos.
           </v-alert>
 
-          <ClientOnly>
+          <v-alert v-else-if="!canAccess" type="warning" variant="tonal" class="mb-4 permission-alert">
+            No tienes permisos para editar esta cotización.
+          </v-alert>
+
+          <ClientOnly v-if="canAccess">
             <CotizacionForm
               mode="edit"
               :initial="cot"
               :loading="saving"
               :detail-url="detailUrl"
+              :articulos-only="articulosOnlyMode"
+              :unlock-articulos="true"
               @submit="onSubmit"
             />
           </ClientOnly>

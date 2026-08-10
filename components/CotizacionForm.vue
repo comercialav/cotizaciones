@@ -3,14 +3,32 @@ import { useCotizacionesStore } from "~/stores/cotizaciones"
 import { useUserStore } from "~/stores/user"
 import { getDocs, collection, deleteDoc, doc } from "firebase/firestore"
 import { ref as storageRef, deleteObject } from "firebase/storage"
+import {
+  type StockEstado,
+  STOCK_OPCIONES,
+  normalizeStockEstado,
+  stockDisponibleLegacy,
+  stockNeedsCompras,
+} from "~/utils/stock"
+import { TIPO_ENTREGA_OPCIONES, type TipoEntrega } from "~/utils/entrega"
+import { mapArticuloCompradoAntes, mergeArticuloEdicion, hydrateArticuloIdentidad, buildArticuloIdentidad, validarArticuloIdentidad } from "~/utils/articulos"
+import { isRichTextEmpty } from "~/utils/format-text"
+import { isTipoEntregaValid } from "~/utils/entrega"
+import { tarifaSelectItems } from "~/utils/tarifas"
 
 type Row = {
+  codigoProducto: string
+  descripcionProducto: string
   articulo: string
   url: string
   unidades: number
   precioCliente: number
   precioSolicitado?: number
   precioCompetencia?: number
+  precioCoste?: number | null
+  proveedor?: string | null
+  compradoAntes?: boolean
+  precioAnterior?: number | null
   mostrarSolicitado?: boolean
   mostrarCompetencia?: boolean
 }
@@ -28,12 +46,17 @@ const props = defineProps<{
   initial?: any
   loading?: boolean
   detailUrl?: string
+  articulosOnly?: boolean
+  unlockArticulos?: boolean
 }>()
 const emit = defineEmits<{ (e:'submit', payload:any): void }>()
 
 const { $db, $storage, $auth } = useNuxtApp()
 const cotStore = useCotizacionesStore()
 const user = useUserStore()
+
+/** Vista de artículos adaptada para Compras (sin solicitado/compra ant., con coste) */
+const isComprasArticlesView = computed(() => user.isCompras)
 
 async function ensureAuth() {
   if ($auth.currentUser) return
@@ -44,15 +67,26 @@ async function ensureAuth() {
 const cliente = ref("")
 const tarifa  = ref<string | null>(null)
 const condicionesEspeciales = ref("")
-const tarifas = ["A1","A2","A3","A4","A5","A6","A7"]
+const tarifas = tarifaSelectItems()
 const fechaDecision = ref<string | null>(null)
 
 const articulos = ref<Row[]>([
-  { articulo:"", url:"", unidades:1, precioCliente:0, precioSolicitado:undefined, precioCompetencia:undefined, mostrarSolicitado:false, mostrarCompetencia:false }
+  {
+    codigoProducto: '', descripcionProducto: '', articulo: '',
+    url: "", unidades: 1, precioCliente: 0,
+    precioSolicitado: undefined, precioCompetencia: undefined,
+    precioCoste: null,
+    proveedor: '',
+    compradoAntes: false, precioAnterior: null,
+    mostrarSolicitado: false, mostrarCompetencia: false,
+  },
 ])
 
 const originalCount = ref(0)
-const isLocked = (i:number) => props.mode === 'edit' && i < originalCount.value
+const isLocked = (i: number) => {
+  if (props.unlockArticulos) return false
+  return props.mode === 'edit' && i < originalCount.value
+}
 
 const errores = ref<string[]>([])
 
@@ -73,7 +107,9 @@ function saveUrl(){
 
 // ======= ADJUNTOS =======
 const adjuntos = ref<File[]>([])
+const adjuntosPicker = ref<File[]>([])
 const adjuntosDB = ref<AdjuntoDB[]>([])
+const MAX_ADJUNTO = 10 * 1024 * 1024
 
 async function cargarAdjuntosDB() {
   if (props.mode !== 'edit' || !props.initial?.id) return
@@ -122,25 +158,39 @@ onMounted(async () => {
     tarifa.value  = props.initial.tarifa  || ""
     condicionesEspeciales.value = props.initial.condicionesEspeciales || ""
 
+    const legacyCompra = {
+      compradoAntes: !!props.initial.compradoAntes,
+      precioAnterior: props.initial.precioAnterior ?? null,
+    }
     const base = (props.initial.articulos?.length
       ? props.initial.articulos
-      : [{ articulo:"", url:"", unidades:0, precioCliente:0 }])
-      .map((a:any)=>({
-        articulo: a.articulo || "",
-        url: a.url || "",
-        unidades: Number(a.unidades)||1,
-        precioCliente: Number(a.precioCliente)||0,
-        precioSolicitado: a.precioSolicitado!=null ? Number(a.precioSolicitado) : undefined,
-        precioCompetencia: a.precioCompetencia!=null ? Number(a.precioCompetencia) : undefined,
-        mostrarSolicitado: a.precioSolicitado != null,
-        mostrarCompetencia: a.precioCompetencia != null,
-      }))
+      : [{ codigoProducto:"", descripcionProducto:"", articulo:"", url:"", unidades:0, precioCliente:0 }])
+      .map((a:any, idx:number) => {
+        const compra = mapArticuloCompradoAntes(a, idx, legacyCompra)
+        const identidad = hydrateArticuloIdentidad(a)
+        return {
+          codigoProducto: identidad.codigoProducto,
+          descripcionProducto: identidad.descripcionProducto,
+          articulo: identidad.articulo,
+          url: a.url || "",
+          unidades: Number(a.unidades)||1,
+          precioCliente: Number(a.precioCliente)||0,
+          precioSolicitado: a.precioSolicitado!=null ? Number(a.precioSolicitado) : undefined,
+          precioCompetencia: a.precioCompetencia!=null ? Number(a.precioCompetencia) : undefined,
+          precioCoste: a.precioCoste != null ? Number(a.precioCoste) : null,
+          proveedor: a.proveedor ? String(a.proveedor).trim() : '',
+          compradoAntes: compra.compradoAntes,
+          precioAnterior: compra.precioAnterior,
+          mostrarSolicitado: a.precioSolicitado != null,
+          mostrarCompetencia: a.precioCompetencia != null,
+        }
+      })
     articulos.value = base
     originalCount.value = base.length
     console.log('originalCount:', originalCount.value)
 
     // resto de campos
-    stockDisponible.value = props.initial.stockDisponible ?? true
+    stockEstado.value = normalizeStockEstado(props.initial)
     licitacion.value      = !!props.initial.licitacion
     clienteFinal.value    = props.initial.clienteFinal || ""
     comentarios.value     = props.initial.comentariosCliente || ""
@@ -148,9 +198,8 @@ onMounted(async () => {
     formaPagoActual.value = props.initial?.formaPagoActual || ""
     plazoEntrega.value    = props.initial?.plazoEntrega || ""
     lugarEntrega.value    = props.initial?.lugarEntrega || ""
+    tipoEntrega.value     = props.initial?.tipoEntrega || ""
     comentarioStock.value = props.initial?.comentarioStock || ""
-    compradoAntes.value   = !!props.initial.compradoAntes
-    precioAnterior.value  = props.initial.precioAnterior || null
     precioCompet.value    = props.initial.precioCompet || null
     fechaDecision.value   = props.initial.fechaDecision || null
 
@@ -162,9 +211,13 @@ onMounted(async () => {
 // ======= acciones artículos =======
 function addArticulo() {
   articulos.value.push({
-    articulo: "", url: "", unidades: 1, precioCliente: 0,
+    codigoProducto: '', descripcionProducto: '', articulo: '',
+    url: "", unidades: 1, precioCliente: 0,
     precioSolicitado: undefined, precioCompetencia: undefined,
-    mostrarSolicitado: false, mostrarCompetencia: false
+    precioCoste: null,
+    proveedor: '',
+    compradoAntes: false, precioAnterior: null,
+    mostrarSolicitado: false, mostrarCompetencia: false,
   })
   console.log('[FORM] addArticulo -> total filas:', articulos.value.length)
 }
@@ -178,9 +231,9 @@ function removeArticulo(i:number){
 }
 
 // ======= campos adicionales =======
-const stockDisponible = ref(true)
-const compradoAntes   = ref(false)
-const precioAnterior  = ref<number | null>(null)
+const stockEstado = ref<StockEstado>('con_stock')
+const stockOpciones = STOCK_OPCIONES
+const avisaCompras = computed(() => stockNeedsCompras(stockEstado.value))
 const licitacion      = ref(false)
 const clienteFinal    = ref("")
 const precioCompet    = ref<number | null>(null)
@@ -189,6 +242,8 @@ const formaPagoSolicitada = ref("")
 const formaPagoActual = ref("")
 const plazoEntrega  = ref("")
 const lugarEntrega  = ref("")
+const tipoEntrega   = ref<TipoEntrega | "">("")
+const tipoEntregaOpciones = TIPO_ENTREGA_OPCIONES
 const comentarioStock = ref("")
 
 // ======= totales =======
@@ -214,10 +269,19 @@ const vendedorDisplay = computed(() =>
     ? (props.initial?.vendedor?.nombre || '—')
     : (user.nombre || '...')
 )
-const isSubmitting = computed(() => props.loading ?? cotStore.saving)
+const isSubmitting = computed(() => Boolean(props.loading || cotStore.saving))
 
-// ======= reglas =======
-const required = (v:any)=> (!!v || v===0) || "Obligatorio"
+function onCompradoAntesChange(row: Row, val: boolean | null) {
+  if (!val) row.precioAnterior = null
+}
+
+function validarPrecioAnterior(a: Row, i: number) {
+  if (!a.compradoAntes) return
+  const p = a.precioAnterior
+  if (p === null || p === undefined || String(p).trim() === '' || isNaN(Number(p)) || Number(p) < 0) {
+    errores.value.push(`Artículo ${i + 1}: indica el precio anterior (obligatorio si ya se compró antes).`)
+  }
+}
 const positive = (v:any)=> (v===null || v===undefined || Number(v) >= 0) || "Debe ser ≥ 0"
 
 // ======= validación / submit =======
@@ -225,6 +289,22 @@ const snackbar = ref<{show:boolean; text:string; color:string}>({show:false,text
 
 function validar(): boolean {
   errores.value = []
+
+  if (props.articulosOnly) {
+    if (!articulos.value.length) errores.value.push("Debe añadir al menos un artículo.")
+    articulos.value.forEach((a, i) => {
+      validarArticuloIdentidad(a, i, errores.value)
+      if (!a.unidades || a.unidades <= 0) errores.value.push(`Artículo ${i + 1}: unidades debe ser > 0.`)
+      if (!isComprasArticlesView.value) validarPrecioAnterior(a, i)
+      if (isComprasArticlesView.value && a.precioCoste != null && a.precioCoste !== undefined) {
+        if (isNaN(Number(a.precioCoste)) || Number(a.precioCoste) < 0) {
+          errores.value.push(`Artículo ${i + 1}: precio de coste debe ser ≥ 0.`)
+        }
+      }
+    })
+    return errores.value.length === 0
+  }
+
   if (!cliente.value.trim()) errores.value.push("El campo Cliente es obligatorio.")
   if (!tarifa.value) errores.value.push("Debe seleccionar una tarifa.")
   if (!articulos.value.length) errores.value.push("Debe añadir al menos un artículo.")
@@ -234,7 +314,7 @@ function validar(): boolean {
   }
 
   articulos.value.forEach((a, i) => {
-    if (!a.articulo || !String(a.articulo).trim()) errores.value.push(`Artículo ${i + 1}: falta el nombre.`)
+    validarArticuloIdentidad(a, i, errores.value)
     if (!a.unidades || a.unidades <= 0) errores.value.push(`Artículo ${i + 1}: unidades debe ser > 0.`)
     ;(['precioSolicitado','precioCompetencia'] as const).forEach((k) => {
       const v = a[k]
@@ -244,10 +324,22 @@ function validar(): boolean {
         }
       }
     })
+    validarPrecioAnterior(a, i)
   })
 
   if (licitacion.value && !clienteFinal.value.trim()) {
     errores.value.push("Debe indicar el Cliente final en caso de licitación.")
+  }
+
+  if (stockEstado.value === 'parcial' && isRichTextEmpty(comentarioStock.value)) {
+    errores.value.push('Describe qué artículos faltan o el detalle del stock parcial.')
+  }
+  if (stockEstado.value === 'sin_stock' && isRichTextEmpty(comentarioStock.value)) {
+    errores.value.push('Indica qué artículos no hay en stock.')
+  }
+
+  if (!isTipoEntregaValid(tipoEntrega.value)) {
+    errores.value.push('Debe indicar si la entrega es recogida o envío.')
   }
 
   if (errores.value.length) {
@@ -258,68 +350,135 @@ function validar(): boolean {
   return errores.value.length === 0
 }
 
-function onPickFiles(e: Event) {
-  const input = e.target as HTMLInputElement
-  const list = Array.from(input.files || [])
+function onPickFiles(payload: File | File[] | Event | null) {
+  let list: File[] = []
+  if (!payload) return
+  if (payload instanceof Event) {
+    list = Array.from((payload.target as HTMLInputElement).files || [])
+  } else if (Array.isArray(payload)) {
+    list = payload
+  } else if (payload instanceof File) {
+    list = [payload]
+  }
   const claves = new Set(adjuntos.value.map(f => `${f.name}-${f.size}`))
-  const nuevos = list.filter(f => !claves.has(`${f.name}-${f.size}`))
-  adjuntos.value = [...adjuntos.value, ...nuevos]
-  input.value = ""
-  console.log('[FORM] onPickFiles -> añadidos:', nuevos.map(f=>f.name), 'total:', adjuntos.value.length)
+  const nuevos: File[] = []
+  for (const f of list) {
+    if (f.size > MAX_ADJUNTO) {
+      snackbar.value = { show: true, text: `"${f.name}" supera 10 MB.`, color: 'error' }
+      continue
+    }
+    if (!claves.has(`${f.name}-${f.size}`)) nuevos.push(f)
+  }
+  if (nuevos.length) {
+    adjuntos.value = [...adjuntos.value, ...nuevos]
+    console.log('[FORM] onPickFiles -> añadidos:', nuevos.map(f => f.name), 'total:', adjuntos.value.length)
+  }
 }
+
+watch(adjuntosPicker, (files) => {
+  if (!files?.length) return
+  onPickFiles(files)
+  adjuntosPicker.value = []
+})
 function removeAdj(i: number) {
   console.log('[FORM] removeAdj ->', adjuntos.value[i]?.name)
   adjuntos.value.splice(i, 1)
 }
 
 function onSubmit() {
+  if (isSubmitting.value) {
+    console.warn('[FORM] onSubmit ignorado: guardado en curso')
+    return
+  }
   console.group('[FORM] onSubmit')
   console.log('mode:', props.mode, 'originalCount:', originalCount.value)
   if (!validar()) { console.groupEnd(); return }
 
-  const sanitize = (a:any) => {
+  const legacyCompra = {
+    compradoAntes: !!props.initial?.compradoAntes,
+    precioAnterior: props.initial?.precioAnterior ?? null,
+  }
+
+  const sanitize = (a:any, idx = 0) => {
+    const identidad = buildArticuloIdentidad({
+      codigoProducto: a.codigoProducto,
+      descripcionProducto: a.descripcionProducto,
+    })
     const r:any = {
-      articulo: (a.articulo||"").trim(),
+      codigoProducto: identidad.codigoProducto,
+      descripcionProducto: identidad.descripcionProducto,
+      articulo: identidad.articulo,
       url: (a.url||"").trim(),
       unidades: Number(a.unidades||0),
       precioCliente: Number(a.precioCliente||0),
     }
-    if (a.precioSolicitado != null)    r.precioSolicitado = Number(a.precioSolicitado)
+    if (!isComprasArticlesView.value) {
+      if (a.precioSolicitado != null) r.precioSolicitado = Number(a.precioSolicitado)
+      const compra = mapArticuloCompradoAntes(a, idx, legacyCompra)
+      if (compra.compradoAntes) {
+        r.compradoAntes = true
+        r.precioAnterior = compra.precioAnterior != null ? Number(compra.precioAnterior) : Number(a.precioAnterior)
+      } else {
+        r.compradoAntes = false
+      }
+    }
     if (a.precioCompetencia != null) r.precioCompetencia = Number(a.precioCompetencia)
+    if (isComprasArticlesView.value) {
+      if (a.precioCoste != null && a.precioCoste !== '' && !isNaN(Number(a.precioCoste))) {
+        r.precioCoste = Number(a.precioCoste)
+      } else {
+        r.precioCoste = null
+      }
+      const proveedor = String(a.proveedor || '').trim()
+      r.proveedor = proveedor || null
+    }
     return r
   }
 
+  const originals: any[] = props.initial?.articulos || []
   let articulosFinal:any[] = []
   if (props.mode === 'edit') {
-    const originales = (props.initial?.articulos || []).map(sanitize)
-    const nuevos = articulos.value.slice(originalCount.value).map(sanitize)
-    articulosFinal = [...originales, ...nuevos]
-    console.log('[FORM] artículos -> originales:', originales.length, 'nuevos:', nuevos.length, 'total:', articulosFinal.length)
+    if (props.unlockArticulos) {
+      articulosFinal = articulos.value.map((a, i) =>
+        mergeArticuloEdicion(originals[i], sanitize(a, i)),
+      )
+    } else {
+      const originales = originals.map((a:any, i:number) =>
+        mergeArticuloEdicion(a, sanitize(a, i)),
+      )
+      const nuevos = articulos.value.slice(originalCount.value).map((a, i) =>
+        sanitize(a, originalCount.value + i),
+      )
+      articulosFinal = [...originales, ...nuevos]
+    }
+    console.log('[FORM] artículos -> total:', articulosFinal.length)
   } else {
-    articulosFinal = articulos.value.map(sanitize)
+    articulosFinal = articulos.value.map((a, i) => sanitize(a, i))
   }
 
-  const data: any = {
-    cliente: cliente.value,
-    tarifa: tarifa.value,
-    articulos: articulosFinal,
-    compradoAntes: compradoAntes.value,
-    precioAnterior: (precioAnterior.value ?? null),
-    fechaDecision: (fechaDecision.value || null),
-    stockDisponible: stockDisponible.value,
-    licitacion: licitacion.value,
-    clienteFinal: clienteFinal.value,
-    comentariosCliente: comentarios.value,
-    formaPagoSolicitada: formaPagoSolicitada.value,
-    formaPagoActual: formaPagoActual.value,
-    condicionesEspeciales: condicionesEspeciales.value.trim(),
-    plazoEntrega: plazoEntrega.value,
-    lugarEntrega: lugarEntrega.value,
-    comentarioStock: comentarioStock.value,
-    ...(props.mode === "create"
-      ? { createdAt: new Date(), updatedAt: new Date() }
-      : { updatedAt: new Date() })
-  }
+  const data: any = props.articulosOnly
+    ? { articulos: articulosFinal }
+    : {
+      cliente: cliente.value,
+      tarifa: tarifa.value,
+      articulos: articulosFinal,
+      fechaDecision: (fechaDecision.value || null),
+      stockEstado: stockEstado.value,
+      stockDisponible: stockDisponibleLegacy(stockEstado.value),
+      licitacion: licitacion.value,
+      clienteFinal: clienteFinal.value,
+      comentariosCliente: comentarios.value,
+      formaPagoSolicitada: formaPagoSolicitada.value,
+      formaPagoActual: formaPagoActual.value,
+      condicionesEspeciales: condicionesEspeciales.value.trim(),
+      plazoEntrega: plazoEntrega.value,
+      lugarEntrega: lugarEntrega.value,
+      tipoEntrega: tipoEntrega.value,
+      comentarioStock: comentarioStock.value,
+      ...(props.mode === "create"
+        ? { createdAt: new Date(), updatedAt: new Date() }
+        : { updatedAt: new Date() })
+    }
 
   console.table(articulosFinal)
   console.log('[FORM] data listo (sin files):', { ...data, createdAt: !!data.createdAt, updatedAt: !!data.updatedAt })
@@ -334,8 +493,8 @@ function onSubmit() {
 <template>
   <v-row class="form-layout">
     <!-- Columna principal -->
-    <v-col cols="12" lg="8" class="form-main">
-      <v-card class="glass mb-6" elevation="8">
+    <v-col cols="12" :lg="articulosOnly ? 12 : 8" class="form-main">
+      <v-card v-if="!articulosOnly" class="glass mb-6" elevation="8">
         <v-card-text>
           <div class="section-title">
             <Icon name="mdi:information-outline" class="text-primary" />
@@ -485,11 +644,12 @@ function onSubmit() {
       <table class="modern-table">
         <thead>
           <tr>
-            <th style="min-width:220px">Artículo</th>
+            <th style="min-width:140px">Código producto</th>
+            <th style="min-width:220px">Descripción producto</th>
             <th class="text-center" style="width:74px">URL</th>
             <th class="num-units">Unid.</th>
             <th class="num" style="width:150px">Precio Tarifa (€)</th>
-            <th class="num" style="width:150px">
+            <th v-if="!isComprasArticlesView" class="num" style="width:150px">
               <div class="d-flex align-center ga-1">
                 <span>Solicitado (€)</span>
                 <v-tooltip :key="'th-sol'">
@@ -517,6 +677,45 @@ function onSubmit() {
                 </v-tooltip>
               </div>
             </th>
+            <th v-if="isComprasArticlesView" class="num" style="width:150px">
+              <div class="d-flex align-center ga-1">
+                <span>Precio coste (€)</span>
+                <v-tooltip>
+                  <template #activator="{ props: tipCoste }">
+                    <span v-bind="tipCoste" class="cursor-pointer">
+                      <Icon name="mdi:information-outline" />
+                    </span>
+                  </template>
+                  <template #default>Precio de coste de compra para esta línea.</template>
+                </v-tooltip>
+              </div>
+            </th>
+            <th v-if="isComprasArticlesView" style="min-width:160px">
+              <div class="d-flex align-center ga-1">
+                <span>Proveedor</span>
+                <v-tooltip>
+                  <template #activator="{ props: tipProv }">
+                    <span v-bind="tipProv" class="cursor-pointer">
+                      <Icon name="mdi:information-outline" />
+                    </span>
+                  </template>
+                  <template #default>Proveedor de compra para esta línea.</template>
+                </v-tooltip>
+              </div>
+            </th>
+            <th v-if="!isComprasArticlesView" class="num line-compra-ant" style="width:150px">
+              <div class="d-flex align-center ga-1">
+                <span>Compra ant.</span>
+                <v-tooltip>
+                  <template #activator="{ props: tipA }">
+                    <span v-bind="tipA" class="cursor-pointer">
+                      <Icon name="mdi:information-outline" />
+                    </span>
+                  </template>
+                  <template #default>Si el cliente ya compró este artículo antes, indica el precio anterior.</template>
+                </v-tooltip>
+              </div>
+            </th>
             <th class="num" style="width:130px">Total</th>
             <th style="width:56px"></th>
           </tr>
@@ -524,20 +723,33 @@ function onSubmit() {
 
         <tbody>
           <tr v-for="(row, i) in articulos" :key="i" :class="{ 'row-locked': isLocked(i) }">
-            <!-- Artículo -->
+            <!-- Código + descripción -->
             <td>
               <div class="d-flex align-center ga-2">
                 <Icon v-if="isLocked(i)" name="mdi:lock-outline" class="lock-icon" title="Artículo original bloqueado" />
                 <v-text-field
-                  v-model="row.articulo"
+                  v-model="row.codigoProducto"
                   variant="outlined" density="compact" hide-details
-                  placeholder="Código o descripción"
+                  placeholder="Código"
                   :disabled="isLocked(i)"
-                  class="flex-grow-1"
+                  style="min-width:120px"
+                  required
                 >
                   <template #prepend-inner><Icon name="mdi:barcode" /></template>
                 </v-text-field>
               </div>
+            </td>
+            <td>
+              <v-text-field
+                v-model="row.descripcionProducto"
+                variant="outlined" density="compact" hide-details
+                placeholder="Descripción del producto"
+                :disabled="isLocked(i)"
+                class="flex-grow-1"
+                required
+              >
+                <template #prepend-inner><Icon name="mdi:text-box-outline" /></template>
+              </v-text-field>
             </td>
 
             <!-- URL como botón + modal -->
@@ -572,8 +784,8 @@ function onSubmit() {
               </v-text-field>
             </td>
 
-            <!-- Solicitado -->
-    <td class="num">
+            <!-- Solicitado (solo comerciales / supervisora) -->
+    <td v-if="!isComprasArticlesView" class="num">
       <div class="d-flex align-center ga-1">
         <v-text-field
           v-if="row.mostrarSolicitado"
@@ -619,8 +831,68 @@ function onSubmit() {
         </v-tooltip>
       </div>
     </td>
-           
 
+    <!-- Precio coste (solo Compras) -->
+    <td v-if="isComprasArticlesView" class="num">
+      <v-text-field
+        v-model.number="row.precioCoste"
+        :rules="[positive]"
+        type="number"
+        min="0"
+        step="0.01"
+        variant="outlined"
+        density="compact"
+        hide-details
+        style="max-width:150px"
+        placeholder="Coste"
+        :disabled="isLocked(i)"
+      >
+        <template #prepend-inner><Icon name="mdi:tag-outline" /></template>
+      </v-text-field>
+    </td>
+
+    <!-- Proveedor (solo Compras) -->
+    <td v-if="isComprasArticlesView">
+      <v-text-field
+        v-model="row.proveedor"
+        variant="outlined"
+        density="compact"
+        hide-details
+        style="min-width:150px"
+        placeholder="Proveedor"
+        :disabled="isLocked(i)"
+      >
+        <template #prepend-inner><Icon name="mdi:truck-delivery-outline" /></template>
+      </v-text-field>
+    </td>
+
+    <!-- Compra anterior (solo comerciales / supervisora) -->
+    <td v-if="!isComprasArticlesView" class="num line-compra-ant">
+      <div class="line-compra-ant__cell">
+        <v-switch
+          v-model="row.compradoAntes"
+          density="compact"
+          hide-details
+          color="primary"
+          :disabled="isLocked(i)"
+          @update:model-value="(v) => onCompradoAntesChange(row, v)"
+        />
+        <v-text-field
+          v-if="row.compradoAntes"
+          v-model.number="row.precioAnterior"
+          type="number"
+          min="0"
+          density="compact"
+          variant="outlined"
+          hide-details
+          placeholder="Precio ant."
+          style="max-width:130px"
+          :disabled="isLocked(i)"
+        >
+          <template #prepend-inner><Icon name="mdi:history" /></template>
+        </v-text-field>
+      </div>
+    </td>
 
             <!-- Total -->
             <td class="num total-cell">
@@ -641,6 +913,27 @@ function onSubmit() {
     <v-btn class="mt-3" color="primary" variant="elevated" @click="addArticulo">
       <Icon name="mdi:plus" class="me-2" /> Añadir artículo
     </v-btn>
+
+    <v-alert v-if="articulosOnly && errores.length" type="error" variant="tonal" class="mt-4">
+      <ul class="mb-0 ps-4">
+        <li v-for="(e, i) in errores" :key="i">{{ e }}</li>
+      </ul>
+    </v-alert>
+
+    <div v-if="articulosOnly" class="form-actions mt-6 d-flex flex-wrap align-center ga-3">
+      <v-btn :loading="isSubmitting" :disabled="isSubmitting" color="primary" size="large" @click="onSubmit">
+        <Icon name="mdi:content-save-outline" class="me-2" />
+        Guardar artículos
+      </v-btn>
+      <v-btn
+        v-if="detailUrl"
+        variant="text"
+        :disabled="isSubmitting"
+        @click="navigateTo(detailUrl)"
+      >
+        Cancelar
+      </v-btn>
+    </div>
   </v-card-text>
 </v-card>
 
@@ -660,7 +953,7 @@ function onSubmit() {
 </v-dialog>
 
 <!-- Adjuntos -->
-<v-card class="glass mb-6" elevation="8">
+<v-card v-if="!articulosOnly" class="glass mb-6" elevation="8">
   <v-card-text>
     <div class="section-title">
       <Icon name="mdi:paperclip" class="text-primary" />
@@ -701,6 +994,7 @@ function onSubmit() {
     <!-- Añadir nuevos adjuntos -->
     <div class="d-flex ga-3 flex-wrap align-center">
       <v-file-input
+        v-model="adjuntosPicker"
         label="Añadir archivos"
         variant="outlined"
         density="comfortable"
@@ -708,7 +1002,6 @@ function onSubmit() {
         show-size
         accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv"
         prepend-icon=""
-        @change="onPickFiles"
         style="max-width: 420px"
       >
         <template #prepend-inner>
@@ -747,7 +1040,7 @@ function onSubmit() {
 </v-card>
 
       <!-- Información adicional -->
-      <v-card class="glass extra-info-card" elevation="8">
+      <v-card v-if="!articulosOnly" class="glass extra-info-card" elevation="8">
         <v-card-text>
           <div class="section-title">
             <Icon name="mdi:clipboard-list-outline" class="text-primary" />
@@ -758,36 +1051,30 @@ function onSubmit() {
             Completa los datos logísticos y comerciales que ayuden al supervisor a cotizar con precisión.
           </p>
 
+          <div class="subsection-label">Disponibilidad de stock</div>
+          <div class="stock-grid mb-4">
+            <button
+              v-for="opt in stockOpciones"
+              :key="opt.value"
+              type="button"
+              class="stock-option"
+              :class="{
+                'stock-option--active': stockEstado === opt.value,
+                [`stock-option--${opt.value}`]: true,
+              }"
+              @click="stockEstado = opt.value"
+            >
+              <Icon
+                :name="opt.value === 'con_stock' ? 'mdi:check-circle-outline' : opt.value === 'parcial' ? 'mdi:alert-circle-outline' : 'mdi:cart-off'"
+                class="stock-option__icon"
+              />
+              <span class="stock-option__label">{{ opt.label }}</span>
+              <span class="stock-option__hint">{{ opt.hint }}</span>
+            </button>
+          </div>
+
           <div class="subsection-label">Opciones</div>
           <div class="toggle-grid mb-2">
-            <div class="toggle-card" :class="{ 'toggle-card--active': stockDisponible }">
-              <v-switch
-                v-model="stockDisponible"
-                color="primary"
-                hide-details
-                density="compact"
-                class="toggle-card__switch"
-              />
-              <div>
-                <div class="toggle-card__title">Unidades en stock</div>
-                <div class="toggle-card__hint">Indica si hay disponibilidad de los artículos solicitados</div>
-              </div>
-            </div>
-
-            <div class="toggle-card" :class="{ 'toggle-card--active': compradoAntes }">
-              <v-switch
-                v-model="compradoAntes"
-                color="primary"
-                hide-details
-                density="compact"
-                class="toggle-card__switch"
-              />
-              <div>
-                <div class="toggle-card__title">Compra anterior</div>
-                <div class="toggle-card__hint">El cliente ya nos ha comprado este producto antes</div>
-              </div>
-            </div>
-
             <div class="toggle-card" :class="{ 'toggle-card--active': licitacion }">
               <v-switch
                 v-model="licitacion"
@@ -830,40 +1117,42 @@ function onSubmit() {
             </p>
           </div>
 
-          <v-textarea
-            v-model="comentarioStock"
-            label="Comentario sobre artículos"
-            placeholder="Ej.: venta casi cerrada, falta un componente del kit..."
-            rows="2"
-            variant="outlined"
-            density="comfortable"
-            auto-grow
-            hide-details="auto"
-            class="mb-4"
-          />
-
-          <v-expand-transition>
-            <v-row v-if="compradoAntes" class="mb-2">
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model.number="precioAnterior"
-                  :rules="[positive]"
-                  label="Precio anterior"
-                  variant="outlined"
-                  density="comfortable"
-                  type="number"
-                  min="0"
-                  suffix="€"
-                >
-                  <template #prepend-inner><Icon name="mdi:history" /></template>
-                </v-text-field>
-              </v-col>
-            </v-row>
-          </v-expand-transition>
+          <div class="mb-4 rich-field">
+            <label class="rich-field__label">
+              {{ stockEstado === 'parcial' ? 'Detalle del stock parcial (obligatorio)' : stockEstado === 'sin_stock' ? 'Qué artículos faltan (obligatorio)' : 'Comentario sobre artículos' }}
+            </label>
+            <RichTextEditor
+              v-model="comentarioStock"
+              placeholder="Pega aquí tablas o texto del correo (negritas, colores, celdas…)"
+              :min-height="300"
+            />
+            <p class="rich-field__hint">Editor enriquecido: puedes pegar tablas del correo y dar formato (negrita, color, fondo de celda).</p>
+          </div>
 
           <v-divider class="my-5" />
 
           <div class="subsection-label">Entrega y plazos</div>
+          <div class="subsection-hint mb-3">Indica si el cliente recoge o hay que enviar el pedido.</div>
+          <div class="stock-grid entrega-grid mb-4">
+            <button
+              v-for="opt in tipoEntregaOpciones"
+              :key="opt.value"
+              type="button"
+              class="stock-option entrega-option"
+              :class="{
+                'stock-option--active': tipoEntrega === opt.value,
+                [`entrega-option--${opt.value}`]: true,
+              }"
+              @click="tipoEntrega = opt.value"
+            >
+              <Icon
+                :name="opt.value === 'recogida' ? 'mdi:store-outline' : 'mdi:truck-delivery-outline'"
+                class="stock-option__icon"
+              />
+              <span class="stock-option__label">{{ opt.label }}</span>
+              <span class="stock-option__hint">{{ opt.hint }}</span>
+            </button>
+          </div>
           <v-row>
             <v-col cols="12" md="4">
               <v-text-field
@@ -888,7 +1177,7 @@ function onSubmit() {
             <v-col cols="12" md="4">
               <v-text-field
                 v-model="lugarEntrega"
-                label="Lugar de entrega"
+                :label="tipoEntrega === 'envio' ? 'Dirección de envío' : tipoEntrega === 'recogida' ? 'Lugar de recogida' : 'Lugar de entrega'"
                 variant="outlined"
                 density="comfortable"
                 placeholder="Oficina, obra, almacén..."
@@ -901,17 +1190,15 @@ function onSubmit() {
           <v-divider class="my-5" />
 
           <div class="subsection-label">Comentarios del cliente</div>
-          <v-textarea
-            v-model="comentarios"
-            label="Observaciones o peticiones del cliente"
-            variant="outlined"
-            rows="3"
-            auto-grow
-            density="comfortable"
-            placeholder="Cualquier detalle relevante para la cotización..."
-          >
-            <template #prepend-inner><Icon name="mdi:comment-text-outline" /></template>
-          </v-textarea>
+          <div class="rich-field">
+            <label class="rich-field__label">Observaciones o peticiones del cliente</label>
+            <RichTextEditor
+              v-model="comentarios"
+              placeholder="Pega aquí el correo del cliente con tablas, listas o formato"
+              :min-height="260"
+            />
+            <p class="rich-field__hint">El formato se conserva al guardar y en la vista de detalle.</p>
+          </div>
 
           <v-alert
             v-if="errores.length"
@@ -925,7 +1212,7 @@ function onSubmit() {
           </v-alert>
 
           <div class="form-actions mt-6 d-flex flex-wrap align-center ga-3">
-            <v-btn :loading="isSubmitting" color="primary" size="large" @click="onSubmit">
+            <v-btn :loading="isSubmitting" :disabled="isSubmitting" color="primary" size="large" @click="onSubmit">
               <Icon name="mdi:send-outline" class="me-2" />
               {{ props.mode === 'edit' ? 'Guardar cambios' : 'Enviar solicitud' }}
             </v-btn>
@@ -947,7 +1234,7 @@ function onSubmit() {
     </v-col>
 
     <!-- Columna resumen -->
-    <v-col cols="12" lg="4" class="form-sidebar">
+    <v-col v-if="!articulosOnly" cols="12" lg="4" class="form-sidebar">
       <v-card class="glass summary-card sticky" elevation="10">
         <v-card-text>
           <div class="summary-header">
@@ -973,12 +1260,12 @@ function onSubmit() {
           </div>
 
           <v-alert
-            v-if="!stockDisponible"
+            v-if="avisaCompras"
             type="warning"
             variant="tonal"
             class="mt-4"
             density="comfortable"
-            title="Sin stock"
+            :title="stockEstado === 'sin_stock' ? 'Sin stock' : 'Stock parcial'"
             text="Se notificará automáticamente a Compras cuando se envíe."
           />
         </v-card-text>
@@ -1008,6 +1295,80 @@ function onSubmit() {
   display:grid;
   grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
   gap:12px;
+}
+.stock-grid{
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:10px;
+}
+.stock-option{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:4px;
+  padding:14px;
+  border-radius:14px;
+  border:1px solid rgba(15, 23, 42, 0.08);
+  background:#fff;
+  cursor:pointer;
+  text-align:left;
+  transition:border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.stock-option:hover{
+  border-color:rgba(25, 118, 210, 0.25);
+}
+.stock-option--active{
+  box-shadow:0 0 0 2px rgba(25, 118, 210, 0.18);
+}
+.stock-option--active.stock-option--con_stock{
+  border-color:#16a34a;
+  background:#f0fdf4;
+}
+.stock-option--active.stock-option--parcial{
+  border-color:#d97706;
+  background:#fffbeb;
+}
+.stock-option--active.stock-option--sin_stock{
+  border-color:#dc2626;
+  background:#fef2f2;
+}
+.stock-option__icon{
+  font-size:1.25rem;
+  color:#64748b;
+}
+.stock-option--active.stock-option--con_stock .stock-option__icon{ color:#16a34a; }
+.stock-option--active.stock-option--parcial .stock-option__icon{ color:#d97706; }
+.stock-option--active.stock-option--sin_stock .stock-option__icon{ color:#dc2626; }
+.stock-option__label{
+  font-size:.92rem;
+  font-weight:700;
+  color:#0f172a;
+}
+.stock-option__hint{
+  font-size:.78rem;
+  line-height:1.35;
+  color:#64748b;
+}
+.entrega-grid{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.entrega-option--active.entrega-option--recogida{
+  border-color:#0d9488;
+  background:#f0fdfa;
+}
+.entrega-option--active.entrega-option--envio{
+  border-color:#2563eb;
+  background:#eff6ff;
+}
+.entrega-option--active.entrega-option--recogida .stock-option__icon{ color:#0d9488; }
+.entrega-option--active.entrega-option--envio .stock-option__icon{ color:#2563eb; }
+.subsection-hint{
+  font-size: 0.82rem;
+  color: rgba(0, 0, 0, 0.55);
+}
+@media (max-width: 768px){
+  .stock-grid{ grid-template-columns:1fr; }
+  .entrega-grid{ grid-template-columns:1fr; }
 }
 .toggle-card{
   display:flex;
@@ -1126,6 +1487,16 @@ function onSubmit() {
 .modern-table .num-units :deep(input[type="number"]){
   text-align:center;
 }
+.line-compra-ant__cell{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:6px;
+  min-width:130px;
+}
+.line-compra-ant__cell :deep(.v-switch){
+  flex:none;
+}
 .total-cell{ font-weight:600; color:#0f172a }
 .actions{ width:56px; text-align:center }
 .sticky{
@@ -1179,4 +1550,21 @@ function onSubmit() {
 .summary-row.accent strong{ font-size:1.05rem }
 .summary-row.good strong{ color:#16a34a }
 .summary-row.bad  strong{ color:#dc2626 }
+.textarea-formatted :deep(textarea) {
+  font-family: inherit;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.rich-field__label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.6);
+}
+.rich-field__hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: rgba(0, 0, 0, 0.55);
+}
 </style>

@@ -7,6 +7,7 @@ import { useUserStore } from '~/stores/user'
 const cot = useCotizacionesStore()
 const user = useUserStore()
 const { $db, $storage, $auth } = useNuxtApp()
+const guardando = ref(false)
 
 // asegúrate de tener sesión para firmar las subidas al Storage
 async function ensureAuth() {
@@ -16,6 +17,13 @@ async function ensureAuth() {
 }
 
 async function guardarNueva(payload:any){
+  if (guardando.value || cot.saving) {
+    console.warn('[NUEVA] Envío ignorado: guardado ya en curso')
+    return
+  }
+  guardando.value = true
+
+  try {
   console.log('[NUEVA] payload @submit:', payload)
 
   const datosForm = payload?.data ?? payload
@@ -30,7 +38,10 @@ async function guardarNueva(payload:any){
   const tarifa  = (datosForm?.tarifa ?? '').trim()
   console.log('[NUEVA] cliente/tarifa:', { cliente, tarifa })
 
-  if (!cliente || !tarifa) { console.warn('[NUEVA] Falta cliente/tarifa'); return }
+  if (!cliente || !tarifa) {
+    console.warn('[NUEVA] Falta cliente/tarifa')
+    return
+  }
 
   // sanity sobre líneas de artículos
   const articulosClean = (datosForm.articulos || []).map((a:any) => {
@@ -42,6 +53,12 @@ async function guardarNueva(payload:any){
     }
     if (a.precioSolicitado != null)   r.precioSolicitado   = Number(a.precioSolicitado)
     if (a.precioCompetencia != null) r.precioCompetencia = Number(a.precioCompetencia)
+    if (a.compradoAntes) {
+      r.compradoAntes = true
+      r.precioAnterior = Number(a.precioAnterior)
+    } else {
+      r.compradoAntes = false
+    }
     return r
   })
 
@@ -49,12 +66,12 @@ async function guardarNueva(payload:any){
     cliente,
     tarifa,
     articulos: articulosClean,
+    stockEstado: datosForm.stockEstado,
     stockDisponible: datosForm.stockDisponible ?? true,
-    compradoAntes: !!datosForm.compradoAntes,
-    precioAnterior: datosForm.precioAnterior ?? null,
     fechaDecision: datosForm.fechaDecision ?? null,
     plazoEntrega: datosForm.plazoEntrega || '',
     lugarEntrega: datosForm.lugarEntrega || '',
+    tipoEntrega: datosForm.tipoEntrega,
     comentarioStock: datosForm.comentarioStock || '',
     licitacion: !!datosForm.licitacion,
     clienteFinal: datosForm.clienteFinal || '',
@@ -83,7 +100,14 @@ async function guardarNueva(payload:any){
     }
   }
 
-  navigateTo('/cotizaciones')
+  await navigateTo('/cotizaciones')
+  } catch (e: any) {
+    if (e?.message !== 'SAVE_IN_PROGRESS') {
+      console.error('[NUEVA] Error al guardar:', e)
+    }
+  } finally {
+    guardando.value = false
+  }
 }
 
 </script>
@@ -97,7 +121,7 @@ async function guardarNueva(payload:any){
       </div>
 
       <!-- Asegúrate de que el componente CotizacionForm emita también `_adjuntosFiles` si el usuario sube ficheros -->
-      <CotizacionForm @submit="guardarNueva" />
+      <CotizacionForm :loading="guardando || cot.saving" @submit="guardarNueva" />
     </v-container>
   </div>
 </template>

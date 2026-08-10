@@ -4,27 +4,34 @@ import { useUserStore } from "~/stores/user"
 import {
   getFirestore, collection, doc, runTransaction, serverTimestamp, setDoc
 } from "firebase/firestore"
+import { normalizeStockEstado, stockDisponibleLegacy, type StockEstado } from '~/utils/stock'
+import { cotizacionCompradoAntes, buildArticuloIdentidad, hydrateArticuloIdentidad } from '~/utils/articulos'
+import { workflowBadgeLabel, workflowBadgeColor } from '~/utils/workflow'
 
 type Articulo = {
+  codigoProducto: string
+  descripcionProducto: string
   articulo: string
   url: string
   unidades: number
   precioCliente: number
-  // ahora ambos opcionales para encajar con el formulario
   precioSolicitado?: number
   precioCompetencia?: number
+  compradoAntes?: boolean
+  precioAnterior?: number | null
 }
 
 type NuevaCotizacion = {
   cliente: string
   tarifa: string
   articulos: Articulo[]
+  stockEstado?: StockEstado
   stockDisponible: boolean
-  compradoAntes: boolean
-  precioAnterior: number | null
+  compradoAntes?: boolean
   fechaDecision: string | null
   plazoEntrega: string
   lugarEntrega: string
+  tipoEntrega: 'recogida' | 'envio'
   comentarioStock: string
   licitacion: boolean
   clienteFinal: string
@@ -45,25 +52,25 @@ type CotizacionBase = {
 }
 
 
-type FiltroClave = 'Cotizadas' | 'Ganadas' | 'Perdidas' | 'Reabiertas' | 'SinRevisar'
+type FiltroClave = 'Cotizadas' | 'Ganadas' | 'Perdidas' | 'Aplazadas' | 'Reabiertas' | 'SinRevisar'
 
-// reemplaza deriveUI por:
 function deriveUI(c: CotizacionBase) {
   const estado = (c.estado || '').toLowerCase()
   const workflow = (c.workflow || '').toLowerCase()
 
   const isGanada   = estado === 'ganada'
   const isPerdida  = estado === 'perdida'
+  const isAplazada = estado === 'aplazada'
   const isReab     = estado === 'reabierta'
   const isPend     = !estado || estado === 'pendiente'
   const isCotizada = workflow === 'cotizado'
 
   // progreso 0/20/40/60/80/100
   let uiProgress = 0
-  if (isGanada || isPerdida) uiProgress = 100
+  if (isGanada || isPerdida || isAplazada) uiProgress = 100
   else if (workflow === 'cotizado') uiProgress = 80
-  else if (workflow === 'espera_cliente') uiProgress = 60
-  else if (workflow === 'consultando') uiProgress = 40
+  else if (workflow === 'espera_cliente' || workflow === 'espera_comercial') uiProgress = 60
+  else if (workflow === 'consultando' || workflow === 'consultando_compras') uiProgress = 40
   else if (workflow === 'en_revision') uiProgress = 20
   else uiProgress = 0
 
@@ -71,9 +78,10 @@ function deriveUI(c: CotizacionBase) {
   const uiColor =
     isGanada  ? 'green-darken-2' :
     isPerdida ? 'red-darken-2'   :
+    isAplazada ? 'grey-darken-1' :
     workflow === 'cotizado' ? 'blue-darken-2' :
-    workflow === 'espera_cliente' ? 'lime-darken-2' :
-    workflow === 'consultando' ? 'yellow-darken-2' :
+    workflow === 'espera_cliente' || workflow === 'espera_comercial' ? 'lime-darken-2' :
+    workflow === 'consultando' || workflow === 'consultando_compras' ? 'yellow-darken-2' :
     workflow === 'en_revision' ? 'amber-darken-2' : 'amber-darken-2'
 
   const uiHidePend = uiProgress === 100
@@ -82,11 +90,28 @@ function deriveUI(c: CotizacionBase) {
   const uiFiltro: FiltroClave =
     isGanada   ? 'Ganadas'    :
     isPerdida  ? 'Perdidas'   :
+    isAplazada ? 'Aplazadas'  :
     isCotizada ? 'Cotizadas'  :
     isReab     ? 'Reabiertas' :
     /* else */   'SinRevisar'
 
-  return { uiProgress, uiColor, uiHidePend, uiFiltro }
+  const workflowBadge = workflowBadgeLabel(workflow)
+  const uiBadge =
+    isGanada   ? 'Ganada'    :
+    isPerdida  ? 'Perdida'   :
+    isAplazada ? 'Aplazada'  :
+    isCotizada ? 'Cotizada'  :
+    workflowBadge ||
+    (isReab     ? 'Reabierta' : 'Pendiente')
+
+  const uiBadgeColor =
+    isGanada  ? 'green-darken-2' :
+    isPerdida ? 'red-darken-2'   :
+    isAplazada ? 'grey-darken-1' :
+    isCotizada ? 'blue-darken-2' :
+    workflow ? workflowBadgeColor(workflow) : uiColor
+
+  return { uiProgress, uiColor, uiHidePend, uiFiltro, uiBadge, uiBadgeColor }
 }
 
 export const useCotizacionesStore = defineStore("cotizaciones", {
@@ -112,6 +137,9 @@ export const useCotizacionesStore = defineStore("cotizaciones", {
       perdidas(): any[] {
         return (this as any).lista.filter((c:any) => c.uiFiltro === 'Perdidas')
       },
+      aplazadas(): any[] {
+        return (this as any).lista.filter((c:any) => c.uiFiltro === 'Aplazadas')
+      },
       // finos
       reabiertas(): any[] {
         return (this as any).lista.filter((c:any) => c.uiFiltro === 'Reabiertas')
@@ -122,17 +150,32 @@ export const useCotizacionesStore = defineStore("cotizaciones", {
     },
   actions: {
   async crearCotizacion(payload: NuevaCotizacion) {
+    if (this.saving) {
+      console.warn('[STORE] crearCotizacion ignorado: guardado ya en curso')
+      throw new Error('SAVE_IN_PROGRESS')
+    }
+    this.saving = true
+
     const user = useUserStore()
-    if (!user.uid) throw new Error("No autenticado")
+    if (!user.uid) {
+      this.saving = false
+      throw new Error("No autenticado")
+    }
 
     const cliente = (payload.cliente ?? '').trim()
     const tarifa  = (payload.tarifa  ?? '').trim()
-    if (!cliente || !tarifa) throw new Error("Cliente y tarifa son obligatorios")
+    if (!cliente || !tarifa) {
+      this.saving = false
+      throw new Error("Cliente y tarifa son obligatorios")
+    }
 
     // Normalizar líneas SIN dejar undefined
     const articulos = (payload.articulos || []).map(a => {
+      const identidad = hydrateArticuloIdentidad(a as Record<string, unknown>)
       const out: any = {
-        articulo: (a.articulo ?? '').trim(),
+        codigoProducto: identidad.codigoProducto,
+        descripcionProducto: identidad.descripcionProducto,
+        articulo: identidad.articulo,
         url: (a.url ?? '').trim(),
         unidades: Number(a.unidades || 0),
         precioCliente: Number(a.precioCliente || 0),
@@ -142,7 +185,6 @@ export const useCotizacionesStore = defineStore("cotizaciones", {
       return out
     })
 
-    this.saving = true
     try {
       const db = getFirestore()
 
@@ -189,6 +231,10 @@ function collectUndefinedPaths(obj: any, base = 'root'): string[] {
 console.log('[STORE] payload recibido:', JSON.parse(JSON.stringify(payload)))
 console.log('[STORE] articulos normalizados:', articulos)
 
+const stockEstado: StockEstado = payload.stockEstado
+  ? normalizeStockEstado({ stockEstado: payload.stockEstado })
+  : normalizeStockEstado({ stockDisponible: payload.stockDisponible, comentarioStock: payload.comentarioStock })
+
 const data: any = {
   numero,
   fechaCreacion: serverTimestamp(),
@@ -198,15 +244,18 @@ const data: any = {
     nombre: user.nombre || null,
     email: user.email || null,
   },
+  participantes: [],
+  participanteUids: user.uid ? [user.uid] : [],
   cliente,
   tarifa,
   articulos,
-  stockDisponible: !!payload.stockDisponible,
-  compradoAntes: !!payload.compradoAntes,
-  precioAnterior: payload.precioAnterior ?? null,
+  stockEstado,
+  stockDisponible: stockDisponibleLegacy(stockEstado),
+  compradoAntes: cotizacionCompradoAntes(articulos),
   fechaDecision: payload.fechaDecision ?? null,
   plazoEntrega: payload.plazoEntrega || "",
   lugarEntrega: payload.lugarEntrega || "",
+  tipoEntrega: payload.tipoEntrega,
   comentarioStock: payload.comentarioStock || "",
   formaPagoActual: payload.formaPagoActual || "",
   formaPagoSolicitada: payload.formaPagoSolicitada || "",
@@ -244,14 +293,15 @@ await setDoc(cotRef, data)
             cliente: data.cliente,
             tarifa: data.tarifa,
             articulos: data.articulos,
+            stockEstado: data.stockEstado,
             stockDisponible: data.stockDisponible,
             licitacion: data.licitacion,
             clienteFinal: data.clienteFinal,
-            compradoAntes: data.compradoAntes,
-            precioAnterior: data.precioAnterior,
+            compradoAntes: cotizacionCompradoAntes(data.articulos),
             fechaDecision: data.fechaDecision,
             plazoEntrega: data.plazoEntrega,
             lugarEntrega: data.lugarEntrega ?? "",
+            tipoEntrega: data.tipoEntrega,
             comentarioStock: data.comentarioStock ?? "",
             formaPagoActual: data.formaPagoActual, 
             formaPagoSolicitada: data.formaPagoSolicitada,

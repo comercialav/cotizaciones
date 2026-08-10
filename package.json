@@ -7,23 +7,26 @@
   },
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "prebuild": "rimraf .nuxt .output",
+    "prebuild": "rimraf .nuxt .output && node scripts/write-version.mjs",
     "build": "cross-env NITRO_PRESET=node-server nuxt build",
     "dev": "nuxt dev",
     "start": "node .output/server/index.mjs",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare && node scripts/copy-tinymce.mjs"
   },
   "dependencies": {
     "@nuxt/icon": "^1.12.0",
     "@pinia/nuxt": "^0.11.0",
+    "@tinymce/tinymce-vue": "^6.3.0",
     "algoliasearch": "^5.39.0",
     "apexcharts": "^5.3.3",
+    "dompurify": "^3.4.11",
     "firebase": "^11.6.0",
     "firebase-admin": "^14.1.0",
     "nodemailer": "^7.0.5",
     "nuxt": "^3.16.2",
+    "tinymce": "^8.7.0",
     "vite-plugin-vuetify": "^2.1.1",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0",
@@ -34,6 +37,7 @@
     "protobufjs": "7.2.5"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.0.5",
     "cross-env": "^10.0.0",
     "rimraf": "^6.0.1"
   }

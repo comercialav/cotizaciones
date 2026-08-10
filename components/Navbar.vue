@@ -4,6 +4,9 @@ import { useUserStore } from "~/stores/user"
 import {
   collection, query, where, getDocs, orderBy, limit
 } from "firebase/firestore"
+import { fetchCotizacionesForScope, getCotizacionMs } from '~/utils/cotizacion-access'
+import { articuloLabel, hydrateArticuloIdentidad } from '~/utils/articulos'
+import { sumLineasPrecioCotizado, sumLineasTarifa } from '~/utils/cotizacion-totales'
 
 const router = useRouter()
 const { $db } = useNuxtApp()
@@ -17,7 +20,9 @@ const searchOpen = ref(false)
 const searchTerm = ref("")
 const searchLoading = ref(false)
 const searchResults = ref<any[]>([])
+const searchTotalMatches = ref(0)
 const searchError = ref<string | null>(null)
+const SEARCH_LIMIT = 20
 
 // Slack avatar (fallback a iniciales si no hay)
 const avatarUrl = ref<string | null>(null)
@@ -38,11 +43,15 @@ function roleLabel(r?: string | null) {
 function fmtDate(ts?: any) {
   const d = ts?.toDate?.() ?? ts ?? null
   if (!d) return "—"
-  return new Intl.DateTimeFormat("es-ES", { dateStyle: "medium" }).format(d)
+  return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric" }).format(d)
 }
-function sumLineas(art: any[]) {
-  return (art || []).reduce((a, r) =>
-    a + (Number(r.unidades) || 0) * (Number(r.precioSolicitado) || 0), 0)
+function fechaCotizacion(c: any) {
+  return c?.fechaCreacion || c?.createdAt || c?.updatedAt
+}
+function totalBusqueda(art: any[]) {
+  const cotizado = sumLineasPrecioCotizado(art)
+  if (cotizado > 0) return cotizado
+  return sumLineasTarifa(art)
 }
 function initials(name?: string | null) {
   return (name || user.email || "U").split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0]?.toUpperCase()||"").join("")
@@ -55,10 +64,38 @@ function norm(s: unknown) {
     .trim()
 }
 
+function articulosOf(c: any): any[] {
+  return Array.isArray(c?.articulos) ? c.articulos : []
+}
+
+function articuloMatches(a: any, q: string) {
+  const id = hydrateArticuloIdentidad(a || {})
+  return (
+    norm(id.codigoProducto).includes(q) ||
+    norm(id.descripcionProducto).includes(q) ||
+    norm(id.articulo).includes(q)
+  )
+}
+
+function matchingArticulos(c: any, term: string) {
+  const q = norm(term)
+  if (!q) return []
+  return articulosOf(c).filter(a => articuloMatches(a, q))
+}
+
 function matchesSearch(c: any, term: string) {
   const q = norm(term)
   if (!q) return false
-  return norm(c?.cliente).includes(q) || norm(c?.numero).includes(q)
+  if (norm(c?.cliente).includes(q) || norm(c?.numero).includes(q)) return true
+  return matchingArticulos(c, term).length > 0
+}
+
+function productHint(c: any, term: string) {
+  const hits = matchingArticulos(c, term)
+  if (!hits.length) return ''
+  const first = articuloLabel(hydrateArticuloIdentidad(hits[0]))
+  if (hits.length === 1) return first
+  return `${first} (+${hits.length - 1})`
 }
 
 /** ---------- Slack avatar ---------- */
@@ -73,7 +110,6 @@ async function loadSlackAvatar() {
 }
 watch(() => user.email, (e) => { if (e) loadSlackAvatar() }, { immediate: true })
 
-/** ---------- Search logic (debounced) ---------- */
 let t: any = null
 watch(searchTerm, (val) => {
   if (!searchOpen.value) return
@@ -84,23 +120,21 @@ watch(searchTerm, (val) => {
 async function doSearch(term: string) {
   searchError.value = null
   searchResults.value = []
+  searchTotalMatches.value = 0
   if (term.length < 2 || !process.client) return
   searchLoading.value = true
   try {
-    const constraints: any[] = []
-    if (!isSupervisor.value && user.uid) {
-      constraints.push(where('vendedor.uid', '==', user.uid))
-    } else if (!isSupervisor.value) {
-      constraints.push(where('vendedor.uid', '==', '__none__'))
-    }
-    constraints.push(orderBy('updatedAt', 'desc'))
-    constraints.push(limit(200))
-
-    const snap = await getDocs(query(collection($db, 'cotizaciones'), ...constraints))
-    searchResults.value = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
+    const matches = (await fetchCotizacionesForScope($db as any, {
+      isSupervisor: isSupervisor.value,
+      scopeUids: user.scopeUids?.length ? user.scopeUids : (user.uid ? [user.uid] : []),
+      userEmail: user.email,
+      max: 400,
+    }))
       .filter(c => matchesSearch(c, term))
-      .slice(0, 8)
+      .sort((a, b) => getCotizacionMs(b) - getCotizacionMs(a))
+
+    searchTotalMatches.value = matches.length
+    searchResults.value = matches.slice(0, SEARCH_LIMIT)
   } catch (e: any) {
     searchError.value = e?.message || 'Error buscando'
   } finally {
@@ -120,6 +154,7 @@ function closeSearch() {
   searchOpen.value = false
   searchTerm.value = ""
   searchResults.value = []
+  searchTotalMatches.value = 0
 }
 
 function goToCot(id: string) {
@@ -235,7 +270,7 @@ async function logout() {
             id="navbar-search-input"
             v-model="searchTerm"
             type="text"
-            placeholder="Buscar por Nº de cotización o cliente…"
+            placeholder="Buscar por Nº, cliente, código o descripción de producto…"
             class="search-input"
           />
           <button class="icon-btn close" aria-label="Cerrar" @click="closeSearch">
@@ -259,17 +294,24 @@ async function logout() {
                 <div class="title">
                   <strong>#{{ r.numero }}</strong> — {{ r.cliente || '—' }}
                 </div>
-                <div class="sub">
-                  {{ fmtDate(r.updatedAt || r.fechaCreacion) }}
+                <div class="sub" v-if="productHint(r, searchTerm)">
+                  {{ productHint(r, searchTerm) }}
                 </div>
               </div>
               <div class="right">
-                € {{ sumLineas(r.articulos).toFixed(2) }}
+                <div class="date">{{ fmtDate(fechaCotizacion(r)) }}</div>
+                <div class="amount">€ {{ totalBusqueda(r.articulos).toFixed(2) }}</div>
               </div>
             </div>
 
             <div class="result-row muted" v-if="!searchResults.length">
               Sin resultados
+            </div>
+            <div
+              class="result-row muted more"
+              v-else-if="searchTotalMatches > searchResults.length"
+            >
+              Mostrando {{ searchResults.length }} de {{ searchTotalMatches }} · afiná la búsqueda para ver más
             </div>
           </template>
         </div>
@@ -368,7 +410,8 @@ async function logout() {
 
 /* resultados */
 .results{
-  max-width: 980px; margin: 10px auto 0; overflow: hidden;
+  max-width: 980px; margin: 10px auto 0; overflow: auto;
+  max-height: min(60vh, 520px);
   border-radius: 12px; border:1px solid rgba(255,255,255,.12);
   background: rgba(10,14,30,.75);
 }
@@ -381,8 +424,14 @@ async function logout() {
 .result-row:hover{ background: rgba(59,130,246,.12); }
 .result-row .title{ font-weight:700 }
 .result-row .sub{ color:#94a3b8; font-size:12px }
-.result-row .right{ font-weight:700; color:#93c5fd }
+.result-row .right{
+  display:flex; flex-direction:column; align-items:flex-end; gap:2px;
+  flex-shrink:0; text-align:right;
+}
+.result-row .date{ font-size:12px; font-weight:600; color:#cbd5e1; white-space:nowrap }
+.result-row .amount{ font-weight:700; color:#93c5fd }
 .result-row.muted{ color:#94a3b8; cursor:default }
+.result-row.muted.more{ justify-content:center; font-size:12px }
 .result-row.error{ color:#fca5a5; cursor:default }
 
 .user-info-trigger {
