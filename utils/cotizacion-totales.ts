@@ -6,7 +6,7 @@ export function sumLineasTarifa(articulos: any[] | null | undefined): number {
   )
 }
 
-/** Total cotizado (precio que fija la supervisora por línea) */
+/** Total cotizado (precio que fija supervisora o compras por línea) */
 export function sumLineasPrecioCotizado(articulos: any[] | null | undefined): number {
   return (articulos || []).reduce(
     (a, r) => a + (Number(r.unidades) || 0) * (Number(r.precioCotizado) || 0),

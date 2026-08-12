@@ -317,7 +317,7 @@ const canEditComercialFull = computed(() =>
   isParticipant.value && !isSupervisor.value && !user.isCompras
   && !isCotizada.value && !isGanada.value && !isPerdida.value && !isAplazada.value
 )
-const canEditarPrecioCotizado = computed(() => isSupervisor.value && !isGanada.value && !isPerdida.value && !isAplazada.value)
+const canEditarPrecioCotizado = computed(() => user.canCotizar && !isGanada.value && !isPerdida.value && !isAplazada.value)
 const canEditFull = computed(() =>
   (isSupervisor.value || canEditComercialFull.value) && !isCotizada.value && !isGanada.value && !isPerdida.value && !isAplazada.value
 )
@@ -1099,7 +1099,7 @@ function cancelarEditorPrecio() {
 }
 
 async function guardarEditorPrecio() {
-  if (editIdx.value === null || !cot.value) return
+  if (editIdx.value === null || !cot.value || !user.canCotizar) return
   const i = editIdx.value
   const valor = Number(editValor.value ?? 0)
   if (isNaN(valor) || valor < 0) {
@@ -1268,7 +1268,7 @@ const showRecotizar = ref(false)
 const recotizarMotivo = ref('')
 
 function abrirCotizar(recotizar = false) {
-  if (!cot.value) return
+  if (!cot.value || !user.canCotizar) return
   const yaCotizada = (cot.value.articulos || []).some((a: any) => a.precioCotizado != null)
   modoRecotizar.value = recotizar || yaCotizada
   cotizarLineas.value = (cot.value.articulos || []).map((a:any) => {
@@ -1353,7 +1353,7 @@ const descuentoCotizarDlg = computed(() =>
 )
 
 async function confirmarCotizacion() {
-  if (!cot.value) return
+  if (!cot.value || !user.canCotizar) return
   // validación: todas las líneas con precioCotizado válido
   if (cotizarFaltan.value) {
     // puedes mostrar un snackbar si quieres
@@ -2578,11 +2578,11 @@ async function agregarLinea() {
                 </div>
               </div>
 
-              <v-divider v-if="isSupervisor" class="my-3" />
+              <v-divider v-if="user.canCotizar" class="my-3" />
 
-              <div v-if="isSupervisor || isOwner" class="acciones-row acciones-row--primary">
+              <div v-if="user.canCotizar || isOwner" class="acciones-row acciones-row--primary">
                 <div class="acciones-buttons">
-                  <v-btn v-if="isSupervisor" color="success" @click="abrirCotizar">
+                  <v-btn v-if="user.canCotizar" color="success" @click="abrirCotizar">
                     <template #prepend><Icon name="mdi:cash-check" class="me-2" /></template>Cotizar
                   </v-btn>
 
@@ -2607,7 +2607,7 @@ async function agregarLinea() {
                   <v-btn v-if="isParticipant" color="warning" variant="tonal" @click="abrirRecotizar">
                     <template #prepend><Icon name="mdi:refresh" class="me-2" /></template>Solicitar recotización
                   </v-btn>
-                  <v-btn v-if="isSupervisor" color="warning" @click="abrirCotizar(true)">
+                  <v-btn v-if="user.canCotizar" color="warning" @click="abrirCotizar(true)">
                     <template #prepend><Icon name="mdi:cash-check" class="me-2" /></template>Recotizar
                   </v-btn>
                   <v-btn v-if="isOwner" color="success" @click="marcarGanada">

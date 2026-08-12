@@ -209,6 +209,9 @@ async function logout() {
         <Icon name="mdi:clock-outline" class="me-1" /> Cotizaciones
       </NuxtLink>
       <ClientOnly>
+        <NuxtLink v-if="isAdmin" to="/admin/ajustes" class="nav-btn">
+          <Icon name="mdi:tune-variant" class="me-1" /> Ajustes
+        </NuxtLink>
         <NuxtLink v-if="isAdmin" to="/admin/notificaciones" class="nav-btn">
           <Icon name="mdi:bell-cog-outline" class="me-1" /> Notificaciones
         </NuxtLink>
@@ -242,6 +245,10 @@ async function logout() {
           </template>
 
           <v-list>
+            <v-list-item v-if="isAdmin" @click="router.push('/admin/ajustes')">
+              <template #prepend><Icon name="mdi:tune-variant" /></template>
+              <v-list-item-title>Ajustes</v-list-item-title>
+            </v-list-item>
             <v-list-item v-if="isAdmin" @click="router.push('/admin/notificaciones')">
               <template #prepend><Icon name="mdi:bell-cog-outline" /></template>
               <v-list-item-title>Notificaciones</v-list-item-title>

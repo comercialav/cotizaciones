@@ -3,6 +3,7 @@ import { defineStore } from "pinia"
 import type { Auth, User } from "firebase/auth"
 import { onAuthStateChanged, signInAnonymously, signOut } from "firebase/auth"
 import { collection, query, where, getDocs, limit } from "firebase/firestore"
+import { useAppConfigStore } from "~/stores/app-config"
 
 type Role = "comercial" | "jefe_comercial" | "compras" | "admin"
 
@@ -61,6 +62,17 @@ export const useUserStore = defineStore("user", {
     },
     canBorrarCotizacion(): boolean {
       return this.isSupervisor || this.isCompras
+    },
+    /** Cotizar / recotizar / fijar precio cotizado.
+     * Supervisora siempre; compras solo si el admin activa el flag. */
+    canCotizar(): boolean {
+      if (this.isSupervisor) return true
+      if (!this.isCompras) return false
+      try {
+        return useAppConfigStore().comprasPuedeCotizar === true
+      } catch {
+        return false
+      }
     },
     /** Aviso «pendiente de compras» solo para supervisora y compras */
     canVerPendienteCompras(): boolean {
