@@ -74,6 +74,10 @@ export const useUserStore = defineStore("user", {
         return false
       }
     },
+    /** Añadir / quitar participantes. Mismo flag que cotizar. */
+    canGestionarParticipantes(): boolean {
+      return this.canCotizar
+    },
     /** Aviso «pendiente de compras» solo para supervisora y compras */
     canVerPendienteCompras(): boolean {
       return this.isSupervisor || this.isCompras

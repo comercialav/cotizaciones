@@ -763,7 +763,7 @@ async function abrirParticipantes() {
 }
 
 async function confirmarParticipante() {
-  if (!participanteSeleccionado.value || !cot.value || !isSupervisor.value) return
+  if (!participanteSeleccionado.value || !cot.value || !user.canGestionarParticipantes) return
   participantesSaving.value = true
   try {
     const comercial = participanteSeleccionado.value
@@ -837,7 +837,7 @@ async function confirmarParticipante() {
 }
 
 async function quitarParticipante(p: { uid: string; nombre?: string | null }) {
-  if (!cot.value || !isSupervisor.value || !p.uid) return
+  if (!cot.value || !user.canGestionarParticipantes || !p.uid) return
   participantesSaving.value = true
   try {
     const participantes = participantesActuales.value.filter(x => x.uid !== p.uid)
@@ -1815,7 +1815,7 @@ async function agregarLinea() {
                 </div>
                 <div class="detail-card__actions">
                   <v-btn
-                    v-if="isSupervisor"
+                    v-if="user.canGestionarParticipantes"
                     variant="tonal"
                     color="indigo"
                     size="small"
@@ -1959,9 +1959,9 @@ async function agregarLinea() {
                   </div>
 
                   <div
-                    v-if="isSupervisor || participantesActuales.length || (isParticipant && !isOwner)"
+                    v-if="user.canGestionarParticipantes || participantesActuales.length || (isParticipant && !isOwner)"
                     class="participantes-strip"
-                    :class="{ 'participantes-strip--guest': isParticipant && !isOwner && !isSupervisor }"
+                    :class="{ 'participantes-strip--guest': isParticipant && !isOwner && !user.canGestionarParticipantes }"
                   >
                     <div class="participantes-strip__head">
                       <span class="participantes-strip__icon-wrap">
@@ -1978,7 +1978,7 @@ async function agregarLinea() {
                           <template v-if="isSoloParticipante">
                             Estás siguiendo esta cotización como participante. Puedes comentar, editar y solicitar recotización.
                           </template>
-                          <template v-else-if="isSupervisor">
+                          <template v-else-if="user.canGestionarParticipantes">
                             Añade comerciales de otras marcas o áreas para que vean la cotización y reciban email y Slack.
                           </template>
                           <template v-else>
@@ -1987,7 +1987,7 @@ async function agregarLinea() {
                         </span>
                       </div>
                       <v-btn
-                        v-if="isSupervisor"
+                        v-if="user.canGestionarParticipantes"
                         color="indigo"
                         variant="flat"
                         size="small"
@@ -2022,7 +2022,7 @@ async function agregarLinea() {
                           <span class="participantes-strip__person-role">Participante</span>
                         </div>
                         <v-btn
-                          v-if="isSupervisor"
+                          v-if="user.canGestionarParticipantes"
                           icon
                           variant="text"
                           size="x-small"
@@ -2034,7 +2034,7 @@ async function agregarLinea() {
                         </v-btn>
                       </div>
 
-                      <div v-if="isSupervisor && !participantesActuales.length" class="participantes-strip__empty">
+                      <div v-if="user.canGestionarParticipantes && !participantesActuales.length" class="participantes-strip__empty">
                         <Icon name="mdi:account-plus-outline" />
                         Sin participantes extra todavía
                       </div>

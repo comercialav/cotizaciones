@@ -46,10 +46,11 @@ async function save() {
       <v-card variant="outlined" rounded="lg" class="pa-5">
         <div class="d-flex align-start justify-space-between ga-4 flex-wrap">
           <div class="flex-grow-1" style="min-width: 220px">
-            <h2 class="text-subtitle-1 font-weight-bold mb-1">Compras puede cotizar</h2>
+            <h2 class="text-subtitle-1 font-weight-bold mb-1">Compras sustituye a supervisora</h2>
             <p class="text-body-2 text-medium-emphasis mb-0">
               Cuando la supervisora no está (vacaciones, baja…), activa esto para que
-              <strong>compras</strong> pueda cotizar, recotizar y editar el precio cotizado.
+              <strong>compras</strong> pueda cotizar, recotizar, editar el precio cotizado
+              y gestionar participantes.
               Desactívalo al volver a la operativa normal.
             </p>
           </div>
@@ -70,10 +71,10 @@ async function save() {
           :type="appConfig.config.comprasPuedeCotizar ? 'warning' : 'info'"
         >
           <template v-if="appConfig.config.comprasPuedeCotizar">
-            Ahora mismo compras <strong>sí</strong> puede cotizar.
+            Ahora mismo compras <strong>sí</strong> puede cotizar y gestionar participantes.
           </template>
           <template v-else>
-            Ahora mismo solo la supervisora (y admin) puede cotizar.
+            Ahora mismo solo la supervisora (y admin) puede cotizar y gestionar participantes.
           </template>
         </v-alert>
 

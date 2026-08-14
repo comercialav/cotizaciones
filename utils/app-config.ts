@@ -1,5 +1,8 @@
 export type AppConfig = {
-  /** Si true, el rol compras puede cotizar / recotizar / editar precio cotizado */
+  /**
+   * Si true, el rol compras puede cotizar / recotizar / editar precio cotizado
+   * y gestionar participantes (sustitución temporal de supervisora).
+   */
   comprasPuedeCotizar: boolean
 }
 
