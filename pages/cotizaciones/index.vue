@@ -303,7 +303,8 @@ const isAplazada = (c:any) => {
   const e = norm(c.estado)
   return ['aplazada','aplazado','aplazadas','aplazados'].includes(e)
 }
-const isCotizada = (c:any) => norm(c.workflow) === 'cotizado'
+const isCotizada = (c:any) =>
+  norm(c.workflow) === 'cotizado' && !isGanada(c) && !isPerdida(c) && !isAplazada(c)
 const isSinRevisar = (c:any) => {
   const e = norm(c.estado)
   const w = norm(c.workflow)
