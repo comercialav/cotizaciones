@@ -13,17 +13,42 @@ const props = withDefaults(defineProps<{
   disabled: false,
 })
 
-// Espera a que window.tinymce esté disponible (cargado via <head> en nuxt.config)
-const ready = ref(false)
-onMounted(() => {
-  const check = () => {
-    if ((window as any).tinymce) {
-      ready.value = true
-    } else {
-      setTimeout(check, 50)
-    }
+/** Carga TinyMCE solo cuando se monta el editor (no en todas las páginas). */
+function loadTinyMceScript(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve()
+  if ((window as any).tinymce) return Promise.resolve()
+
+  const existing = document.querySelector('script[data-tinymce]') as HTMLScriptElement | null
+  if (existing) {
+    return new Promise((resolve, reject) => {
+      if ((window as any).tinymce) {
+        resolve()
+        return
+      }
+      existing.addEventListener('load', () => resolve(), { once: true })
+      existing.addEventListener('error', () => reject(new Error('TinyMCE load failed')), { once: true })
+    })
   }
-  check()
+
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = '/tinymce/tinymce.min.js'
+    s.async = true
+    s.dataset.tinymce = '1'
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error('TinyMCE load failed'))
+    document.head.appendChild(s)
+  })
+}
+
+const ready = ref(false)
+onMounted(async () => {
+  try {
+    await loadTinyMceScript()
+    ready.value = !!(window as any).tinymce
+  } catch {
+    ready.value = false
+  }
 })
 
 const init = {

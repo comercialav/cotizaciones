@@ -369,7 +369,7 @@ const rankingOpts = computed(()=>({
               </v-card-title>
               <v-card-text>
                 <ClientOnly>
-                  <apexchart type="bar" height="260"
+                  <ApexChart type="bar" height="260"
                     :options="barOpts" :series="[{name:'Solicitudes', data:seriesDias}]"
                   />
                 </ClientOnly>
@@ -382,7 +382,7 @@ const rankingOpts = computed(()=>({
             <v-card-title class="pb-0">Estados</v-card-title>
             <v-card-text>
               <ClientOnly>
-                <apexchart type="donut" height="220"
+                <ApexChart type="donut" height="220"
                   :options="donutOpts" :series="donutSeries"
                 />
               </ClientOnly>
@@ -412,7 +412,7 @@ const rankingOpts = computed(()=>({
             </v-card-title>
             <v-card-text>
               <ClientOnly>
-                <apexchart type="bar" height="260"
+                <ApexChart type="bar" height="260"
                   :options="tarifasOpts" :series="[{name:'Solicitudes',data:tarifasCounts}]"
                 />
               </ClientOnly>
@@ -485,7 +485,7 @@ const rankingOpts = computed(()=>({
             </v-card-title>
             <v-card-text>
               <ClientOnly>
-                <apexchart
+                <ApexChart
                   type="bar"
                   height="260"
                   :options="rankingOpts"

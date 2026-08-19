@@ -13,20 +13,12 @@ export default defineNuxtConfig({
   },
   vite: {
     ssr: { noExternal: ['vuetify'] },
-    plugins: [vuetify({ autoImport: true })],
+    plugins: [vuetify({ autoImport: { labs: true } })],
   },
 
   app: {
     head: {
       meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1' }],
-      link: [
-        // Precarga TinyMCE para que esté disponible en navegación SPA sin reload
-        { rel: 'preload', as: 'script', href: '/tinymce/tinymce.min.js' },
-      ],
-      script: [
-        // Carga TinyMCE globalmente una sola vez al arrancar la app
-        { src: '/tinymce/tinymce.min.js', defer: true },
-      ],
     },
   },
 

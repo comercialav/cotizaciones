@@ -1,19 +1,11 @@
 // plugins/vuetify.ts
 import { defineNuxtPlugin } from '#app'
 import { createVuetify } from 'vuetify'
-import * as components from 'vuetify/components'
-import * as directives from 'vuetify/directives'
-import { VIconBtn } from 'vuetify/labs/VIconBtn'
 
 export default defineNuxtPlugin(({ vueApp }) => {
+  // Componentes vía vite-plugin-vuetify (autoImport + labs), sin import * masivo
   const vuetify = createVuetify({
-    components: {
-      VIconBtn,
-      ...components,
-    },
-    directives,
-    theme: { defaultTheme: 'light' }
-    
+    theme: { defaultTheme: 'light' },
   })
   vueApp.use(vuetify)
 })

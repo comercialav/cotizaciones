@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  collection, doc, onSnapshot, addDoc, updateDoc, getDocs, query, where, serverTimestamp
+  collection, doc, onSnapshot, addDoc, updateDoc, getDocs, query, where, serverTimestamp, deleteField
 } from 'firebase/firestore'
 import { useUserStore } from '~/stores/user'
 import {
@@ -216,8 +216,11 @@ const canToggleColaPendiente = computed(() => {
   return isSupervisor.value || actorEsCompras()
 })
 
+const colaPendienteSaving = ref(false)
+
 async function setColaPendiente(kind: 'compras' | 'supervisor') {
-  if (!cot.value || !canToggleColaPendiente.value) return
+  if (!cot.value || !canToggleColaPendiente.value || colaPendienteSaving.value) return
+  colaPendienteSaving.value = true
   try {
     if (kind === 'supervisor') {
       await updateDoc(doc($db, 'cotizaciones', id.value), {
@@ -239,9 +242,9 @@ async function setColaPendiente(kind: 'compras' | 'supervisor') {
       })
     } else {
       await updateDoc(doc($db, 'cotizaciones', id.value), {
-        comprasAtendidoAt: null,
+        comprasAtendidoAt: deleteField(),
         comprasRespondio: false,
-        comprasAtendidoPor: null,
+        comprasAtendidoPor: deleteField(),
         updatedAt: serverTimestamp(),
       })
       await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
@@ -253,6 +256,8 @@ async function setColaPendiente(kind: 'compras' | 'supervisor') {
     }
   } catch (e) {
     console.error('[COLA] Error cambiando pendiente:', e)
+  } finally {
+    colaPendienteSaving.value = false
   }
 }
 
@@ -1946,7 +1951,8 @@ async function agregarLinea() {
                         size="small"
                         :variant="cotPendienteStrip?.kind === 'compras' ? 'flat' : 'tonal'"
                         color="indigo"
-                        :disabled="cotPendienteStrip?.kind === 'compras'"
+                        :disabled="cotPendienteStrip?.kind === 'compras' || colaPendienteSaving"
+                        :loading="colaPendienteSaving && cotPendienteStrip?.kind !== 'compras'"
                         @click="setColaPendiente('compras')"
                       >
                         Pendiente compras
@@ -1955,7 +1961,8 @@ async function agregarLinea() {
                         size="small"
                         :variant="cotPendienteStrip?.kind === 'supervisor' ? 'flat' : 'tonal'"
                         color="light-blue-darken-1"
-                        :disabled="cotPendienteStrip?.kind === 'supervisor'"
+                        :disabled="cotPendienteStrip?.kind === 'supervisor' || colaPendienteSaving"
+                        :loading="colaPendienteSaving && cotPendienteStrip?.kind === 'compras'"
                         @click="setColaPendiente('supervisor')"
                       >
                         Pendiente supervisora

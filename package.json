@@ -37,6 +37,7 @@
     "protobufjs": "7.2.5"
   },
   "devDependencies": {
+    "@iconify-json/mdi": "^1.2.3",
     "@types/dompurify": "^3.0.5",
     "cross-env": "^10.0.0",
     "rimraf": "^6.0.1"

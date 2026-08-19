@@ -99,11 +99,13 @@ export function comprasRespondioEnChat(comments: unknown[] | null | undefined): 
 
 export function comprasHaRespondido(
   source: { comprasAtendidoAt?: unknown; comprasRespondio?: boolean | null } | null | undefined,
-  comments?: unknown[] | null,
+  _comments?: unknown[] | null,
 ): boolean {
+  // La cola compras ↔ supervisora es manual (flags del documento).
+  // Los comentarios ya no cierran ni reabren esa cola.
   if (source?.comprasRespondio === true) return true
+  if (source?.comprasRespondio === false) return false
   if (timestampPresent(source?.comprasAtendidoAt)) return true
-  if (comments?.length) return comprasRespondioEnChat(comments)
   return false
 }
 
