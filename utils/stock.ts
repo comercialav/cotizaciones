@@ -88,7 +88,8 @@ export function comentarioEsRespuestaCompras(c: {
   author?: { rol?: string | null; email?: string | null } | null
 } | null | undefined): boolean {
   if (!c || !authorEsCompras(c.author)) return false
-  if (c.tipo === 'actividad') return true
+  // Actividades técnicas (coste, proveedor, líneas…) no cierran la cola de compras
+  if (c.tipo === 'actividad') return false
   return Boolean(String(c.texto || '').trim() || c.attachment)
 }
 
@@ -178,7 +179,7 @@ export function pendienteComprasMeta(estado: StockEstado) {
   return {
     title: 'Pendiente de compras',
     stockTag: pendienteComprasText(estado),
-    hint: 'Revisar disponibilidad y responder en el chat de la cotización',
+    hint: 'Revisar disponibilidad. Cuando termines, marca «Pendiente supervisora».',
   }
 }
 
@@ -187,7 +188,7 @@ export function pendienteSupervisorMeta(estado: StockEstado, forCompras = false)
     title: 'Pendiente de supervisora',
     stockTag: pendienteComprasText(estado),
     hint: forCompras
-      ? 'Ya respondiste. En espera de que la supervisora revise y cotice.'
-      : 'Compras ya respondió. Pendiente de revisión y cotización.',
+      ? 'En espera de que la supervisora revise y cotice. Si falta algo, vuelve a «Pendiente compras».'
+      : 'Compras ya pasó el turno. Pendiente de revisión y cotización.',
   }
 }

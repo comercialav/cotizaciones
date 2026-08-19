@@ -158,11 +158,6 @@ async function onSubmitArticulosOnly(nuevosArticulos: any[]) {
   await updateDoc(doc($db, 'cotizaciones', id.value), {
     articulos: articulosGuardados,
     updatedAt: now,
-    ...(user.isCompras ? {
-      comprasAtendidoAt: now,
-      comprasRespondio: true,
-      comprasAtendidoPor: { uid: user.uid, nombre: user.nombre, email: user.email, rol: user.rol },
-    } : {}),
   })
 
   const stamp = new Intl.DateTimeFormat('es-ES', {

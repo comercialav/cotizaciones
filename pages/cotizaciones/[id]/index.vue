@@ -7,7 +7,7 @@ import {
 import { useUserStore } from '~/stores/user'
 import {
   normalizeStockEstado, stockEstadoLabel, stockChipColor, stockNeedsCompras,
-  pendienteStripState, comprasHaRespondido, comprasRespondioEnChat, cotizacionAbierta,
+  pendienteStripState, cotizacionAbierta,
 } from '~/utils/stock'
 import { formatComentarioNotifText } from '~/utils/notificaciones'
 import { cotizacionCompradoAntes, articuloLabel, buildArticuloIdentidad, hydrateArticuloIdentidad } from '~/utils/articulos'
@@ -210,52 +210,51 @@ function actorEsCompras() {
   return user.isCompras || (user.rol || '').toLowerCase() === 'compras'
 }
 
-async function marcarComprasAtendido(extra?: { uid?: string | null; nombre?: string | null; rol?: string | null; email?: string | null }) {
-  if (!actorEsCompras() && !extra) return
-  if (comprasHaRespondido(cot.value)) return
-  await updateDoc(doc($db, 'cotizaciones', id.value), {
-    comprasAtendidoAt: serverTimestamp(),
-    comprasRespondio: true,
-    comprasAtendidoPor: {
-      uid: extra?.uid ?? user.uid,
-      nombre: extra?.nombre ?? user.nombre,
-      email: extra?.email ?? user.email,
-      rol: extra?.rol ?? user.rol ?? 'compras',
-    },
-    updatedAt: serverTimestamp(),
-  })
-}
+const canToggleColaPendiente = computed(() => {
+  if (!cot.value || !cotizacionAbierta(cot.value)) return false
+  if (!stockNeedsCompras(normalizeStockEstado(cot.value))) return false
+  return isSupervisor.value || actorEsCompras()
+})
 
-let backfillComprasAtendidoInFlight = false
-watch(
-  [cot, comments],
-  async () => {
-    if (!cot.value || backfillComprasAtendidoInFlight) return
-    if (!cotizacionAbierta(cot.value)) return
-    if (!stockNeedsCompras(normalizeStockEstado(cot.value))) return
-    if (comprasHaRespondido(cot.value)) return
-    if (!comprasRespondioEnChat(comments.value)) return
-
-    const ultimo = [...comments.value]
-      .reverse()
-      .find(c => (c.author?.rol || '').toLowerCase() === 'compras' || String(c.author?.email || '').toLowerCase() === 'compras@comercialav.com')
-
-    backfillComprasAtendidoInFlight = true
-    try {
-      await marcarComprasAtendido(ultimo?.author ? {
-        uid: ultimo.author.uid,
-        nombre: ultimo.author.nombre,
-        rol: ultimo.author.rol,
-        email: ultimo.author.email,
-      } : { rol: 'compras', nombre: 'Compras' })
-    } catch (e) {
-      console.error('[COMPRAS] backfill comprasAtendidoAt', e)
-    } finally {
-      backfillComprasAtendidoInFlight = false
+async function setColaPendiente(kind: 'compras' | 'supervisor') {
+  if (!cot.value || !canToggleColaPendiente.value) return
+  try {
+    if (kind === 'supervisor') {
+      await updateDoc(doc($db, 'cotizaciones', id.value), {
+        comprasAtendidoAt: serverTimestamp(),
+        comprasRespondio: true,
+        comprasAtendidoPor: {
+          uid: user.uid,
+          nombre: user.nombre,
+          email: user.email,
+          rol: user.rol || (actorEsCompras() ? 'compras' : 'jefe_comercial'),
+        },
+        updatedAt: serverTimestamp(),
+      })
+      await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
+        texto: `➡️ ${user.nombre} marcó la cotización como pendiente de supervisora.`,
+        tipo: 'actividad',
+        fecha: serverTimestamp(),
+        author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
+      })
+    } else {
+      await updateDoc(doc($db, 'cotizaciones', id.value), {
+        comprasAtendidoAt: null,
+        comprasRespondio: false,
+        comprasAtendidoPor: null,
+        updatedAt: serverTimestamp(),
+      })
+      await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
+        texto: `↩️ ${user.nombre} marcó la cotización como pendiente de compras.`,
+        tipo: 'actividad',
+        fecha: serverTimestamp(),
+        author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
+      })
     }
-  },
-  { immediate: true },
-)
+  } catch (e) {
+    console.error('[COLA] Error cambiando pendiente:', e)
+  }
+}
 
 async function marcarComercialRespondioEspera(extra?: {
   uid?: string | null
@@ -584,16 +583,8 @@ async function addComment() {
     }
 
     const patch: Record<string, unknown> = { updatedAt: serverTimestamp() }
-    if (actorEsCompras() && !comprasHaRespondido(cot.value)) {
-      patch.comprasAtendidoAt = serverTimestamp()
-      patch.comprasRespondio = true
-      patch.comprasAtendidoPor = {
-        uid: user.uid,
-        nombre: user.nombre,
-        email: user.email,
-        rol: user.rol || 'compras',
-      }
-    }
+    // El handoff compras → supervisora se hace de forma explícita con los botones de cola.
+    // Un comentario no cierra automáticamente la pendiente de compras.
     if (
       isOwner.value
       && (cot.value?.workflow || '').toLowerCase() === 'espera_comercial'
@@ -934,7 +925,7 @@ const gifGanada = ref('')
 const gifPerdida = ref('')
 
 async function marcarGanada() {
-  if (!cot.value) return;
+  if (!cot.value || !isParticipant.value) return;
   dlgConfirmacionCompra.value = true;
 }
 
@@ -1005,7 +996,7 @@ async function confirmarCompra() {
   console.log('Debug - cot.value:', cot.value);  // Ver el objeto completo de cot
   console.log('Debug - cot.value.articulos:', cot.value?.articulos);  // Ver los artículos de la cotización
   
-  if (!cot.value || !cot.value.articulos) {
+  if (!cot.value || !cot.value.articulos || !isParticipant.value) {
     console.error('Error - cot.value o cot.value.articulos no está definido');
     return; // Verificamos que cot.articulos existe antes de continuar
   }
@@ -1520,16 +1511,6 @@ async function agregarLinea() {
       articulos: nuevas,
       updatedAt: serverTimestamp(),
     }
-    if (actorEsCompras() && !comprasHaRespondido(cot.value)) {
-      patch.comprasAtendidoAt = serverTimestamp()
-      patch.comprasRespondio = true
-      patch.comprasAtendidoPor = {
-        uid: user.uid,
-        nombre: user.nombre,
-        email: user.email,
-        rol: user.rol || 'compras',
-      }
-    }
     await updateDoc(doc($db, 'cotizaciones', id.value), patch)
     await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
       texto: `➕ ${user.nombre} añadió “${linea.articulo}” (${linea.unidades} uds).`,
@@ -1942,19 +1923,43 @@ async function agregarLinea() {
               <div class="detail-tab-panels">
                 <div v-show="detailTab === 'detalles'" class="detail-tab-panel" role="tabpanel">
                   <div
-                    v-if="cotPendienteStrip"
+                    v-if="cotPendienteStrip || canToggleColaPendiente"
                     class="pendiente-compras pendiente-compras--detail"
-                    :class="cotPendienteStrip.kind === 'supervisor' ? 'pendiente-compras--supervisor' : 'pendiente-compras--compras'"
+                    :class="(cotPendienteStrip?.kind || 'compras') === 'supervisor' ? 'pendiente-compras--supervisor' : 'pendiente-compras--compras'"
                   >
                     <span class="pendiente-compras__icon-wrap">
-                      <Icon :name="cotPendienteStrip.kind === 'supervisor' ? 'mdi:account-supervisor-outline' : 'mdi:clipboard-text-clock-outline'" />
+                      <Icon :name="(cotPendienteStrip?.kind || 'compras') === 'supervisor' ? 'mdi:account-supervisor-outline' : 'mdi:clipboard-text-clock-outline'" />
                     </span>
                     <div class="pendiente-compras__copy">
                       <div class="pendiente-compras__row">
-                        <strong>{{ cotPendienteStrip.meta.title }}</strong>
-                        <span class="pendiente-compras__tag">{{ cotPendienteStrip.meta.stockTag }}</span>
+                        <strong>{{ cotPendienteStrip?.meta.title || 'Cola pendiente' }}</strong>
+                        <span v-if="cotPendienteStrip?.meta.stockTag" class="pendiente-compras__tag">
+                          {{ cotPendienteStrip.meta.stockTag }}
+                        </span>
                       </div>
-                      <span class="pendiente-compras__hint">{{ cotPendienteStrip.meta.hint }}</span>
+                      <span class="pendiente-compras__hint">
+                        {{ cotPendienteStrip?.meta.hint || 'Indica quién tiene que seguir trabajando esta cotización.' }}
+                      </span>
+                    </div>
+                    <div v-if="canToggleColaPendiente" class="pendiente-compras__actions">
+                      <v-btn
+                        size="small"
+                        :variant="cotPendienteStrip?.kind === 'compras' ? 'flat' : 'tonal'"
+                        color="indigo"
+                        :disabled="cotPendienteStrip?.kind === 'compras'"
+                        @click="setColaPendiente('compras')"
+                      >
+                        Pendiente compras
+                      </v-btn>
+                      <v-btn
+                        size="small"
+                        :variant="cotPendienteStrip?.kind === 'supervisor' ? 'flat' : 'tonal'"
+                        color="light-blue-darken-1"
+                        :disabled="cotPendienteStrip?.kind === 'supervisor'"
+                        @click="setColaPendiente('supervisor')"
+                      >
+                        Pendiente supervisora
+                      </v-btn>
                     </div>
                   </div>
 
@@ -2610,7 +2615,7 @@ async function agregarLinea() {
                   <v-btn v-if="user.canCotizar" color="warning" @click="abrirCotizar(true)">
                     <template #prepend><Icon name="mdi:cash-check" class="me-2" /></template>Recotizar
                   </v-btn>
-                  <v-btn v-if="isOwner" color="success" @click="marcarGanada">
+                  <v-btn v-if="isParticipant" color="success" @click="marcarGanada">
                     <template #prepend><Icon name="mdi:trophy" class="me-2" /></template>GANADA
                   </v-btn>
                   <v-btn v-if="isOwner" color="error" @click="marcarPerdida">
@@ -3541,6 +3546,23 @@ async function agregarLinea() {
   font-size:.82rem;
   line-height:1.45;
   color:#64748b;
+}
+.pendiente-compras__actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  flex-shrink:0;
+  margin-left:auto;
+  align-self:center;
+}
+@media (max-width: 700px) {
+  .pendiente-compras__actions{
+    margin-left:0;
+    width:100%;
+  }
+  .pendiente-compras__actions .v-btn{
+    flex:1 1 auto;
+  }
 }
 .participantes-strip{
   display:flex;
