@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router"
 import { useUserStore } from "~/stores/user"
-import {
-  collection, query, where, getDocs, orderBy, limit
-} from "firebase/firestore"
 import { fetchCotizacionesForScope, getCotizacionMs } from '~/utils/cotizacion-access'
 import { articuloLabel, hydrateArticuloIdentidad } from '~/utils/articulos'
 import { sumLineasPrecioCotizado, sumLineasTarifa } from '~/utils/cotizacion-totales'
@@ -112,9 +109,10 @@ watch(() => user.email, (e) => { if (e) loadSlackAvatar() }, { immediate: true }
 
 let t: any = null
 watch(searchTerm, (val) => {
-  if (!searchOpen.value) return
+  const q = val.trim()
+  if (q.length >= 2) searchOpen.value = true
   clearTimeout(t)
-  t = setTimeout(() => doSearch(val.trim()), 300)
+  t = setTimeout(() => doSearch(q), 300)
 })
 
 async function doSearch(term: string) {
@@ -142,12 +140,10 @@ async function doSearch(term: string) {
   }
 }
 
-
 function openSearch() {
   searchOpen.value = true
   nextTick(() => {
-    const el = document.getElementById("navbar-search-input")
-    el?.focus()
+    document.getElementById("navbar-search-input")?.focus()
   })
 }
 function closeSearch() {
@@ -155,6 +151,13 @@ function closeSearch() {
   searchTerm.value = ""
   searchResults.value = []
   searchTotalMatches.value = 0
+  searchError.value = null
+}
+function onSearchBlur() {
+  // Deja tiempo al click en un resultado
+  setTimeout(() => {
+    if (!searchTerm.value.trim()) searchOpen.value = false
+  }, 180)
 }
 
 function goToCot(id: string) {
@@ -180,6 +183,7 @@ async function logout() {
     app
     flat
     elevate-on-scroll
+    color="#1e1e2f"
     class="px-4 navbar"
   >
     <!-- Izquierda: Logo -->
@@ -221,14 +225,74 @@ async function logout() {
       </ClientOnly>
     </div>
 
-    <v-spacer />
+    <!-- Buscador siempre visible (rellena el hueco del spacer) -->
+    <div class="search-wrap">
+      <div class="search-inline" @keydown.esc="closeSearch">
+        <Icon name="mdi:magnify" class="search-ico" />
+        <input
+          id="navbar-search-input"
+          v-model="searchTerm"
+          type="search"
+          placeholder="Buscar nº, cliente o producto…"
+          class="search-input"
+          autocomplete="off"
+          @focus="openSearch"
+          @blur="onSearchBlur"
+        />
+        <button
+          v-if="searchTerm"
+          type="button"
+          class="icon-btn close"
+          aria-label="Limpiar búsqueda"
+          @mousedown.prevent="closeSearch"
+        >
+          <Icon name="mdi:close" />
+        </button>
+      </div>
 
-    <!-- Derecha: icono de búsqueda + avatar -->
+      <transition name="fade">
+        <div
+          v-if="searchOpen && searchTerm.trim().length >= 2"
+          class="search-dropdown"
+        >
+          <div class="result-row muted" v-if="searchLoading">Buscando…</div>
+          <div class="result-row error" v-else-if="searchError">{{ searchError }}</div>
+          <template v-else>
+            <div
+              v-for="r in searchResults"
+              :key="r.id"
+              class="result-row"
+              @mousedown.prevent="goToCot(r.id)"
+            >
+              <div class="left">
+                <div class="title">
+                  <strong>#{{ r.numero }}</strong> — {{ r.cliente || '—' }}
+                </div>
+                <div class="sub" v-if="productHint(r, searchTerm)">
+                  {{ productHint(r, searchTerm) }}
+                </div>
+              </div>
+              <div class="right">
+                <div class="date">{{ fmtDate(fechaCotizacion(r)) }}</div>
+                <div class="amount">€ {{ totalBusqueda(r.articulos).toFixed(2) }}</div>
+              </div>
+            </div>
+            <div class="result-row muted" v-if="!searchResults.length">
+              Sin resultados
+            </div>
+            <div
+              class="result-row muted more"
+              v-else-if="searchTotalMatches > searchResults.length"
+            >
+              Mostrando {{ searchResults.length }} de {{ searchTotalMatches }} · afiná la búsqueda para ver más
+            </div>
+          </template>
+        </div>
+      </transition>
+    </div>
+
+    <!-- Derecha: avatar -->
     <div class="right-wrap">
-      <button class="icon-btn" aria-label="Buscar" @click="openSearch">
-        <Icon name="mdi:magnify" />
-      </button>
-
       <ClientOnly>
         <v-menu v-model="userMenu" offset-y transition="scale-transition">
           <template #activator="{ props }">
@@ -267,77 +331,22 @@ async function logout() {
         </v-menu>
       </ClientOnly>
     </div>
-
-    <!-- Overlay de búsqueda -->
-    <transition name="fade">
-      <div v-if="searchOpen" class="search-overlay" @keydown.esc="closeSearch">
-        <div class="search-bar">
-          <Icon name="mdi:magnify" class="search-ico" />
-          <input
-            id="navbar-search-input"
-            v-model="searchTerm"
-            type="text"
-            placeholder="Buscar por Nº, cliente, código o descripción de producto…"
-            class="search-input"
-          />
-          <button class="icon-btn close" aria-label="Cerrar" @click="closeSearch">
-            <Icon name="mdi:close" />
-          </button>
-        </div>
-
-        <!-- Resultados -->
-        <div class="results" v-if="searchTerm && (searchLoading || searchResults.length || searchError)">
-          <div class="result-row muted" v-if="searchLoading">Buscando…</div>
-          <div class="result-row error" v-else-if="searchError">{{ searchError }}</div>
-
-          <template v-else>
-            <div
-              v-for="r in searchResults"
-              :key="r.id"
-              class="result-row"
-              @click="goToCot(r.id)"
-            >
-              <div class="left">
-                <div class="title">
-                  <strong>#{{ r.numero }}</strong> — {{ r.cliente || '—' }}
-                </div>
-                <div class="sub" v-if="productHint(r, searchTerm)">
-                  {{ productHint(r, searchTerm) }}
-                </div>
-              </div>
-              <div class="right">
-                <div class="date">{{ fmtDate(fechaCotizacion(r)) }}</div>
-                <div class="amount">€ {{ totalBusqueda(r.articulos).toFixed(2) }}</div>
-              </div>
-            </div>
-
-            <div class="result-row muted" v-if="!searchResults.length">
-              Sin resultados
-            </div>
-            <div
-              class="result-row muted more"
-              v-else-if="searchTotalMatches > searchResults.length"
-            >
-              Mostrando {{ searchResults.length }} de {{ searchTotalMatches }} · afiná la búsqueda para ver más
-            </div>
-          </template>
-        </div>
-      </div>
-    </transition>
   </v-app-bar>
 </template>
 
 <style scoped>
 /* ---------- Barra base ---------- */
 .navbar{
-  background: linear-gradient(90deg,#1e1e2f,#2a2a40);
+  background: linear-gradient(90deg,#1e1e2f,#2a2a40) !important;
   border-bottom: 1px solid rgba(0,255,255,.18);
   box-shadow: 0 0 18px rgba(0,255,255,.25);
-  display:flex; align-items:center; gap:14px;
+}
+.navbar :deep(.v-toolbar__content){
+  gap: 12px;
 }
 
 /* IZQ */
-.left-wrap{ display:flex; align-items:center; gap:14px; }
+.left-wrap{ display:flex; align-items:center; gap:14px; flex-shrink:0; }
 .logo-link{ display:flex; align-items:center; }
 .logo{ filter: drop-shadow(0 4px 12px rgba(0,0,0,.3)); }
 
@@ -356,7 +365,7 @@ async function logout() {
 }
 
 /* MENÚ centro */
-.center-menu{ display:flex; align-items:center; gap:8px; margin:0 auto; }
+.center-menu{ display:flex; align-items:center; gap:8px; flex-shrink:0; }
 .nav-btn{
   display:inline-flex; align-items:center; gap:6px;
   padding:8px 12px; border-radius:10px;
@@ -365,16 +374,52 @@ async function logout() {
 }
 .nav-btn:hover{ background: rgba(59,130,246,.12); transform: translateY(-1px); }
 
+/* Buscador inline */
+.search-wrap{
+  position: relative;
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 420px;
+  margin: 0 8px;
+}
+.search-inline{
+  display:flex; align-items:center; gap:8px;
+  height: 40px;
+  padding: 0 10px 0 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.16);
+}
+.search-ico{ color:#c7d2fe; font-size: 20px; flex-shrink:0; }
+.search-input{
+  flex:1; min-width:0; height:36px; outline:none; border:none;
+  background: transparent; color:#fff; font-size:14px;
+}
+.search-input::placeholder{ color: rgba(226,232,240,.72); }
+.search-dropdown{
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0; right: 0;
+  z-index: 1300;
+  overflow: auto;
+  max-height: min(60vh, 480px);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(16, 20, 36, .96);
+  box-shadow: 0 12px 28px rgba(0,0,0,.45);
+  backdrop-filter: blur(8px);
+}
+
 /* DERECHA */
-.right-wrap{ display:flex; align-items:center; gap:8px; }
+.right-wrap{ display:flex; align-items:center; gap:8px; flex-shrink:0; margin-left: auto; }
 .icon-btn{
-  width:40px; height:40px; border-radius:12px; display:grid; place-items:center;
+  width:32px; height:32px; border-radius:10px; display:grid; place-items:center;
   background: rgba(255,255,255,.06);
   color:#e5e7eb; border:1px solid rgba(255,255,255,.08);
   transition: transform .15s, background .15s;
+  flex-shrink: 0;
 }
 .icon-btn:hover{ transform: translateY(-1px); background: rgba(255,255,255,.12); }
-.icon-btn.close{ margin-left:8px; }
 
 /* Avatar */
 .avatar{
@@ -387,41 +432,9 @@ async function logout() {
 .hover-scale{ transition: transform .2s ease; }
 .hover-scale:hover{ transform: scale(1.08); }
 
-/* ---------- Overlay de búsqueda ---------- */
 .fade-enter-active,.fade-leave-active{ transition: opacity .15s ease; }
 .fade-enter-from,.fade-leave-to{ opacity:0; }
 
-.search-overlay{
-  position: fixed; top:0; left:0; right:0;
-  padding:10px 16px 12px;
-  background: linear-gradient(90deg,#1e1e2fcc,#2a2a40cc);
-  backdrop-filter: blur(6px);
-  z-index: 1200; /* sobre la app-bar */
-  border-bottom: 1px solid rgba(0,255,255,.18);
-  box-shadow: 0 6px 22px rgba(0,0,0,.35);
-}
-
-/* barra */
-.search-bar{
-  max-width: 980px; margin: 0 auto;
-  display:flex; align-items:center; gap:10px;
-  padding:10px 12px; border-radius:14px;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.16);
-}
-.search-ico{ color:#c7d2fe; font-size: 22px; }
-.search-input{
-  flex:1; height:36px; outline:none; border:none;
-  background: transparent; color:#fff; font-size:16px;
-}
-
-/* resultados */
-.results{
-  max-width: 980px; margin: 10px auto 0; overflow: auto;
-  max-height: min(60vh, 520px);
-  border-radius: 12px; border:1px solid rgba(255,255,255,.12);
-  background: rgba(10,14,30,.75);
-}
 .result-row{
   display:flex; align-items:center; justify-content:space-between;
   padding:10px 14px; gap:16px; cursor:pointer;
@@ -455,10 +468,20 @@ async function logout() {
 .user-name {
   font-weight: 600;
   font-size: 14px;
-  color: #fff; /* puedes ajustarlo a tu tema */
+  color: #fff;
 }
 .user-role {
   font-size: 12px;
-  color: #93c5fd; /* azul clarito */
+  color: #93c5fd;
+}
+
+@media (max-width: 1100px) {
+  .promo-pill { display: none; }
+}
+@media (max-width: 760px) {
+  .center-menu .nav-btn { padding: 8px; }
+  .center-menu .nav-btn :deep(span:not(.iconify)) { display: none; }
+  .user-text { display: none; }
+  .search-wrap { max-width: none; }
 }
 </style>

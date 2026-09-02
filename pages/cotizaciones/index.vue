@@ -9,7 +9,16 @@ import { normalizeStockEstado, stockEstadoLabel, stockChipColor, stockNeedsCompr
 import { fetchCotizacionesForScope } from '~/utils/cotizacion-access'
 import { tarifaLabel } from '~/utils/tarifas'
 import { filterComercialesList, PENDIENTE_COMPRAS_FILTER_UID, isPendienteComprasFilterUid } from '~/utils/comerciales'
-import { workflowLabelShort, workflowBadgeLabel, workflowBadgeColor, comercialHaRespondidoEspera } from '~/utils/workflow'
+import { workflowLabelShort, workflowBadgeLabel, workflowBadgeColor } from '~/utils/workflow'
+import {
+  isGanadaCot as isGanada,
+  isPerdidaCot as isPerdida,
+  isAplazadaCot as isAplazada,
+  isCotizadaCot as isCotizada,
+  isSinRevisarCot as isSinRevisar,
+  isReabiertaCot as isReabierta,
+  isPendienteParaRol,
+} from '~/utils/cotizacion-filtros'
 import { htmlToPlainText, looksLikeHtml } from '~/utils/format-text'
 import { readUserBool, writeUserBool } from '~/utils/user-preference'
 import {
@@ -254,82 +263,12 @@ function applyStatusFilter(base: any[]) {
     case 'Cotizadas':   return base.filter(isCotizada)
     case 'SinRevisar':  return base.filter(isSinRevisar)
     case 'Reabiertas':  return base.filter(isReabierta)
-    case 'Pendiente':   return base.filter(c => isPendienteParaRol(c))
+    case 'Pendiente':   return base.filter(c => isPendienteParaRol(c, {
+      isSupervisor: user.isSupervisor,
+      isCompras: user.isCompras,
+    }))
     default:            return base
   }
-}
-
-/**
- * "Pendientes" muestra solo cotizaciones que requieren acción del rol actual:
- * - Compras: stock sin/parcial sin responder + consultando proveedor/compras.
- * - Supervisora: sin revisar + en revisión, EXCLUYENDO consultando proveedor/compras
- *   y las que aún esperan respuesta de Compras (sin stock/parcial sin responder).
- * - Comercial: todas las pendientes abiertas.
- */
-function isPendienteParaRol(c: any): boolean {
-  const w = norm(c.workflow)
-  const abierta = !isGanada(c) && !isPerdida(c) && !isAplazada(c) && !isCotizada(c)
-  if (!abierta) return false
-
-  if (user.isCompras) {
-    if (w === 'consultando' || w === 'consultando_compras') return true
-    return pendienteComprasActive(c)
-  }
-
-  if (user.isSupervisor) {
-    // Aún espera respuesta de Compras → no le toca a la supervisora
-    if (pendienteComprasActive(c)) return false
-    // Consultando proveedor o compras → pendiente de Compras, no de supervisora
-    if (w === 'consultando' || w === 'consultando_compras') return false
-    if (w === 'espera_comercial') {
-      return comercialHaRespondidoEspera(c)
-    }
-    return isSinRevisar(c) || isReabierta(c) || pendienteSupervisorActive(c)
-  }
-
-  // Comercial: todas las pendientes
-  return isSinRevisar(c) || isReabierta(c)
-}
-
-const isGanada = (c:any) => {
-  const e = norm(c.estado)
-  return ['ganada','ganado','ganadas','ganados'].includes(e)
-}
-const isPerdida = (c:any) => {
-  const e = norm(c.estado)
-  return ['perdida','perdido','perdidas','perdidos'].includes(e)
-}
-const isAplazada = (c:any) => {
-  const e = norm(c.estado)
-  return ['aplazada','aplazado','aplazadas','aplazados'].includes(e)
-}
-const isCotizada = (c:any) =>
-  norm(c.workflow) === 'cotizado' && !isGanada(c) && !isPerdida(c) && !isAplazada(c)
-const isSinRevisar = (c:any) => {
-  const e = norm(c.estado)
-  const w = norm(c.workflow)
-  return (!e || e === 'pendiente') && !w
-}
-const isReabierta = (c:any) => {
-  const e = norm(c.estado)
-  const w = norm(c.workflow)
-  return e === 'reabierta' || ((e === 'pendiente' || !e) && ['en_revision','consultando','consultando_compras','espera_cliente','espera_comercial'].includes(w))
-}
-
-// Helpers locales para el filtro de pendientes (sin cargar comentarios del chat)
-function pendienteComprasActive(c: any) {
-  const abierta = !isGanada(c) && !isPerdida(c) && !isAplazada(c) && !isCotizada(c)
-  if (!abierta) return false
-  if (c.comprasRespondio === true) return false
-  if (c.comprasAtendidoAt) return false
-  return stockNeedsCompras(normalizeStockEstado(c))
-}
-function pendienteSupervisorActive(c: any) {
-  const abierta = !isGanada(c) && !isPerdida(c) && !isAplazada(c) && !isCotizada(c)
-  if (!abierta) return false
-  const comprasOk = c.comprasRespondio === true || !!c.comprasAtendidoAt
-  if (!comprasOk) return false
-  return stockNeedsCompras(normalizeStockEstado(c))
 }
 
 // Lista filtrada SOLO sobre la página actual (pageDocs)

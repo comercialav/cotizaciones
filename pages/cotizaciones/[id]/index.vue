@@ -955,6 +955,37 @@ async function marcarAplazada() {
   await notifySlack(`🕒 ${user.nombre} marcó la cotización “${cot.value?.cliente || id.value}” como *APLAZADA*`, 'aplazada');
 }
 
+const canReabrirAplazada = computed(() =>
+  isAplazada.value && (isParticipant.value || isSupervisor.value || actorEsCompras())
+)
+const reabrirSaving = ref(false)
+
+async function reabrirAplazada() {
+  if (!cot.value || !canReabrirAplazada.value || reabrirSaving.value) return
+  reabrirSaving.value = true
+  try {
+    await updateDoc(doc($db, 'cotizaciones', id.value), {
+      estado: 'reabierta',
+      workflow: 'en_revision',
+      updatedAt: serverTimestamp(),
+    })
+    await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
+      fecha: serverTimestamp(),
+      author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
+      texto: `🔄 ${user.nombre} reabrió la cotización (estaba APLAZADA).`,
+      tipo: 'actividad',
+    })
+    await notifySlack(
+      `🔄 ${user.nombre} reabrió la cotización “${cot.value?.cliente || id.value}” (estaba *APLAZADA*).`,
+      'reabierta',
+    )
+  } catch (e) {
+    console.error('[REABRIR] Error reabriendo aplazada:', e)
+  } finally {
+    reabrirSaving.value = false
+  }
+}
+
 async function marcarPerdida() {
   if (!cot.value) return;
 
@@ -2640,6 +2671,17 @@ async function agregarLinea() {
               <v-alert :type="isGanada ? 'success' : isPerdida ? 'error' : 'info'" variant="tonal" class="mb-0">
                 {{ isGanada ? 'Esta cotización fue GANADA.' : isPerdida ? 'Esta cotización fue PERDIDA.' : 'Esta cotización fue APLAZADA.' }}
               </v-alert>
+              <div v-if="canReabrirAplazada" class="acciones-row acciones-row--primary mt-3">
+                <v-btn
+                  color="primary"
+                  :loading="reabrirSaving"
+                  :disabled="reabrirSaving"
+                  @click="reabrirAplazada"
+                >
+                  <template #prepend><Icon name="mdi:refresh" class="me-2" /></template>
+                  Reabrir cotización
+                </v-btn>
+              </div>
             </template>
             </v-card>
 

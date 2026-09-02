@@ -8,6 +8,7 @@ import { TARIFA_CODIGOS, tarifaLabel } from "~/utils/tarifas"
 import { sumLineasPrecioCotizado, sumLineasTarifa } from "~/utils/cotizacion-totales"
 import { fetchCotizacionesForScope } from '~/utils/cotizacion-access'
 import { filterComercialesList } from '~/utils/comerciales'
+import { isGanadaCot, isPendienteParaRol, isReabiertaChip } from '~/utils/cotizacion-filtros'
 
 const { $db } = useNuxtApp()
 const user = useUserStore()
@@ -194,11 +195,13 @@ function computeStats(){
   const mapClientes:Record<string,number> = {}
 
   for(const d of docs.value){
-    const estado=(d.estado||"pendiente").toLowerCase()
     kpis.total++
-    if(estado==="pendiente") kpis.pendientes++
-    if(estado==="ganada") kpis.ganadas++
-    if(estado==="reabierta") kpis.reabiertas++
+    // Misma lógica que chips del listado (Pendiente / Reabiertas)
+    if (isPendienteParaRol(d, { isSupervisor: user.isSupervisor, isCompras: user.isCompras })) {
+      kpis.pendientes++
+    }
+    if (isReabiertaChip(d)) kpis.reabiertas++
+    if(isGanadaCot(d)) kpis.ganadas++
     if(stockNeedsCompras(normalizeStockEstado(d))) kpis.sinStock++
 
     const totCot = sumLineasPrecioCotizado(d.articulos)
@@ -207,9 +210,11 @@ function computeStats(){
     const descPct = totCli > 0 && totCot > 0 ? (1 - (totCot / totCli)) * 100 : 0
     if (totCot > 0) kpis.descuentoMedioPct += descPct
 
-    if(estado==="pendiente") donutSeries.value[0]++
-    if(estado==="ganada") donutSeries.value[1]++
-    if(estado==="reabierta") donutSeries.value[2]++
+    if (isPendienteParaRol(d, { isSupervisor: user.isSupervisor, isCompras: user.isCompras })) {
+      donutSeries.value[0]++
+    }
+    if (isGanadaCot(d)) donutSeries.value[1]++
+    if (isReabiertaChip(d)) donutSeries.value[2]++
 
     const idx=tarifas.indexOf(d.tarifa)
     if(idx>=0) tarifasCounts.value[idx]++
@@ -228,7 +233,7 @@ function computeStats(){
       if(!mapCom[vend]) mapCom[vend]={nombre:vend,uid,total:0,ganadas:0}
       else if(!mapCom[vend].uid && uid) mapCom[vend].uid = uid
       mapCom[vend].total++
-      if(estado==="ganada") mapCom[vend].ganadas++
+      if(isGanadaCot(d)) mapCom[vend].ganadas++
 
       const cli=d.cliente||"?"
       mapClientes[cli]=(mapClientes[cli]||0)+totCot
