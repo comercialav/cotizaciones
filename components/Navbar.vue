@@ -26,7 +26,7 @@ const avatarUrl = ref<string | null>(null)
 
 /** ---------- helpers ---------- */
 const isSupervisor = computed(
-  () => user.rol === "jefe_comercial" || user.rol === "admin" || user.esSupervisor === true
+  () => user.isSupervisor || user.isCompras
 )
 const isAdmin = computed(() => user.isAdmin)
 
@@ -105,7 +105,56 @@ async function loadSlackAvatar() {
     // silencioso
   }
 }
-watch(() => user.email, (e) => { if (e) loadSlackAvatar() }, { immediate: true })
+const searchWrapEl = ref<HTMLElement | null>(null)
+const dropdownStyle = ref<Record<string, string>>({})
+
+function updateDropdownPos() {
+  if (!process.client) return
+  const el = searchWrapEl.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const width = Math.max(r.width, 360)
+  const left = Math.min(r.left, window.innerWidth - width - 12)
+  dropdownStyle.value = {
+    position: 'fixed',
+    top: `${Math.round(r.bottom + 8)}px`,
+    left: `${Math.round(Math.max(12, left))}px`,
+    width: `${Math.round(width)}px`,
+    zIndex: '4000',
+  }
+}
+
+const showDropdown = computed(() => searchOpen.value && searchTerm.value.trim().length >= 2)
+
+watch(showDropdown, (open) => {
+  if (!open || !process.client) return
+  nextTick(updateDropdownPos)
+})
+
+function onWinReposition() {
+  if (showDropdown.value) updateDropdownPos()
+}
+
+function onDocPointerDown(e: Event) {
+  const target = e.target as Node | null
+  if (!target) return
+  if (searchWrapEl.value?.contains(target)) return
+  const drop = document.getElementById('navbar-search-dropdown')
+  if (drop?.contains(target)) return
+  searchOpen.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('resize', onWinReposition)
+  window.addEventListener('scroll', onWinReposition, true)
+  document.addEventListener('pointerdown', onDocPointerDown)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', onWinReposition)
+  window.removeEventListener('scroll', onWinReposition, true)
+  document.removeEventListener('pointerdown', onDocPointerDown)
+  clearTimeout(t)
+})
 
 let t: any = null
 watch(searchTerm, (val) => {
@@ -152,12 +201,6 @@ function closeSearch() {
   searchResults.value = []
   searchTotalMatches.value = 0
   searchError.value = null
-}
-function onSearchBlur() {
-  // Deja tiempo al click en un resultado
-  setTimeout(() => {
-    if (!searchTerm.value.trim()) searchOpen.value = false
-  }, 180)
 }
 
 function goToCot(id: string) {
@@ -225,8 +268,8 @@ async function logout() {
       </ClientOnly>
     </div>
 
-    <!-- Buscador siempre visible (rellena el hueco del spacer) -->
-    <div class="search-wrap">
+    <!-- Buscador siempre visible -->
+    <div ref="searchWrapEl" class="search-wrap">
       <div class="search-inline" @keydown.esc="closeSearch">
         <Icon name="mdi:magnify" class="search-ico" />
         <input
@@ -237,7 +280,6 @@ async function logout() {
           class="search-input"
           autocomplete="off"
           @focus="openSearch"
-          @blur="onSearchBlur"
         />
         <button
           v-if="searchTerm"
@@ -249,47 +291,53 @@ async function logout() {
           <Icon name="mdi:close" />
         </button>
       </div>
-
-      <transition name="fade">
-        <div
-          v-if="searchOpen && searchTerm.trim().length >= 2"
-          class="search-dropdown"
-        >
-          <div class="result-row muted" v-if="searchLoading">Buscando…</div>
-          <div class="result-row error" v-else-if="searchError">{{ searchError }}</div>
-          <template v-else>
-            <div
-              v-for="r in searchResults"
-              :key="r.id"
-              class="result-row"
-              @mousedown.prevent="goToCot(r.id)"
-            >
-              <div class="left">
-                <div class="title">
-                  <strong>#{{ r.numero }}</strong> — {{ r.cliente || '—' }}
-                </div>
-                <div class="sub" v-if="productHint(r, searchTerm)">
-                  {{ productHint(r, searchTerm) }}
-                </div>
-              </div>
-              <div class="right">
-                <div class="date">{{ fmtDate(fechaCotizacion(r)) }}</div>
-                <div class="amount">€ {{ totalBusqueda(r.articulos).toFixed(2) }}</div>
-              </div>
-            </div>
-            <div class="result-row muted" v-if="!searchResults.length">
-              Sin resultados
-            </div>
-            <div
-              class="result-row muted more"
-              v-else-if="searchTotalMatches > searchResults.length"
-            >
-              Mostrando {{ searchResults.length }} de {{ searchTotalMatches }} · afiná la búsqueda para ver más
-            </div>
-          </template>
-        </div>
-      </transition>
     </div>
+
+    <ClientOnly>
+      <Teleport to="body">
+        <transition name="fade">
+          <div
+            v-if="showDropdown"
+            id="navbar-search-dropdown"
+            class="search-dropdown"
+            :style="dropdownStyle"
+          >
+            <div class="result-row muted" v-if="searchLoading">Buscando…</div>
+            <div class="result-row error" v-else-if="searchError">{{ searchError }}</div>
+            <template v-else>
+              <div
+                v-for="r in searchResults"
+                :key="r.id"
+                class="result-row"
+                @mousedown.prevent="goToCot(r.id)"
+              >
+                <div class="left">
+                  <div class="title">
+                    <strong>#{{ r.numero }}</strong> — {{ r.cliente || '—' }}
+                  </div>
+                  <div class="sub" v-if="productHint(r, searchTerm)">
+                    {{ productHint(r, searchTerm) }}
+                  </div>
+                </div>
+                <div class="right">
+                  <div class="date">{{ fmtDate(fechaCotizacion(r)) }}</div>
+                  <div class="amount">€ {{ totalBusqueda(r.articulos).toFixed(2) }}</div>
+                </div>
+              </div>
+              <div class="result-row muted" v-if="!searchResults.length">
+                Sin resultados
+              </div>
+              <div
+                class="result-row muted more"
+                v-else-if="searchTotalMatches > searchResults.length"
+              >
+                Mostrando {{ searchResults.length }} de {{ searchTotalMatches }} · afiná la búsqueda para ver más
+              </div>
+            </template>
+          </div>
+        </transition>
+      </Teleport>
+    </ClientOnly>
 
     <!-- Derecha: avatar -->
     <div class="right-wrap">
@@ -340,9 +388,11 @@ async function logout() {
   background: linear-gradient(90deg,#1e1e2f,#2a2a40) !important;
   border-bottom: 1px solid rgba(0,255,255,.18);
   box-shadow: 0 0 18px rgba(0,255,255,.25);
+  overflow: visible !important;
 }
 .navbar :deep(.v-toolbar__content){
   gap: 12px;
+  overflow: visible !important;
 }
 
 /* IZQ */
@@ -396,19 +446,6 @@ async function logout() {
   background: transparent; color:#fff; font-size:14px;
 }
 .search-input::placeholder{ color: rgba(226,232,240,.72); }
-.search-dropdown{
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0; right: 0;
-  z-index: 1300;
-  overflow: auto;
-  max-height: min(60vh, 480px);
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(16, 20, 36, .96);
-  box-shadow: 0 12px 28px rgba(0,0,0,.45);
-  backdrop-filter: blur(8px);
-}
 
 /* DERECHA */
 .right-wrap{ display:flex; align-items:center; gap:8px; flex-shrink:0; margin-left: auto; }
@@ -431,28 +468,6 @@ async function logout() {
 /* Hovers comunes */
 .hover-scale{ transition: transform .2s ease; }
 .hover-scale:hover{ transform: scale(1.08); }
-
-.fade-enter-active,.fade-leave-active{ transition: opacity .15s ease; }
-.fade-enter-from,.fade-leave-to{ opacity:0; }
-
-.result-row{
-  display:flex; align-items:center; justify-content:space-between;
-  padding:10px 14px; gap:16px; cursor:pointer;
-  color:#e5e7eb; border-top:1px solid rgba(255,255,255,.06);
-}
-.result-row:first-child{ border-top:0; }
-.result-row:hover{ background: rgba(59,130,246,.12); }
-.result-row .title{ font-weight:700 }
-.result-row .sub{ color:#94a3b8; font-size:12px }
-.result-row .right{
-  display:flex; flex-direction:column; align-items:flex-end; gap:2px;
-  flex-shrink:0; text-align:right;
-}
-.result-row .date{ font-size:12px; font-weight:600; color:#cbd5e1; white-space:nowrap }
-.result-row .amount{ font-weight:700; color:#93c5fd }
-.result-row.muted{ color:#94a3b8; cursor:default }
-.result-row.muted.more{ justify-content:center; font-size:12px }
-.result-row.error{ color:#fca5a5; cursor:default }
 
 .user-info-trigger {
   display: flex;
@@ -484,4 +499,36 @@ async function logout() {
   .user-text { display: none; }
   .search-wrap { max-width: none; }
 }
+</style>
+
+<style>
+#navbar-search-dropdown.search-dropdown{
+  overflow: auto;
+  max-height: min(60vh, 480px);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(16, 20, 36, .96);
+  box-shadow: 0 12px 28px rgba(0,0,0,.45);
+  backdrop-filter: blur(8px);
+}
+#navbar-search-dropdown .result-row{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 14px; gap:16px; cursor:pointer;
+  color:#e5e7eb; border-top:1px solid rgba(255,255,255,.06);
+}
+#navbar-search-dropdown .result-row:first-child{ border-top:0; }
+#navbar-search-dropdown .result-row:hover{ background: rgba(59,130,246,.12); }
+#navbar-search-dropdown .title{ font-weight:700 }
+#navbar-search-dropdown .sub{ color:#94a3b8; font-size:12px }
+#navbar-search-dropdown .right{
+  display:flex; flex-direction:column; align-items:flex-end; gap:2px;
+  flex-shrink:0; text-align:right;
+}
+#navbar-search-dropdown .date{ font-size:12px; font-weight:600; color:#cbd5e1; white-space:nowrap }
+#navbar-search-dropdown .amount{ font-weight:700; color:#93c5fd }
+#navbar-search-dropdown .result-row.muted{ color:#94a3b8; cursor:default }
+#navbar-search-dropdown .result-row.muted.more{ justify-content:center; font-size:12px }
+#navbar-search-dropdown .result-row.error{ color:#fca5a5; cursor:default }
+.fade-enter-active,.fade-leave-active{ transition: opacity .15s ease; }
+.fade-enter-from,.fade-leave-to{ opacity:0; }
 </style>
