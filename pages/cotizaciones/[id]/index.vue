@@ -10,7 +10,7 @@ import {
   pendienteStripState, cotizacionAbierta,
 } from '~/utils/stock'
 import { formatComentarioNotifText } from '~/utils/notificaciones'
-import { cotizacionCompradoAntes, articuloLabel, buildArticuloIdentidad, hydrateArticuloIdentidad } from '~/utils/articulos'
+import { cotizacionCompradoAntes, articuloLabel, buildArticuloIdentidad, hydrateArticuloIdentidad, mapArticuloCompradoAntes } from '~/utils/articulos'
 import { tarifaLabel } from '~/utils/tarifas'
 import { tipoEntregaLabel } from '~/utils/entrega'
 import { workflowLabel, workflowBadgeColor, comercialHaRespondidoEspera, comercialRespondioEnChat, comentarioEsRespuestaComercial } from '~/utils/workflow'
@@ -180,6 +180,8 @@ const isAplazada  = computed(() => (cot.value?.estado || '').toLowerCase() === '
 const isOwner = computed(() => isCotizacionOwner(user.uid, cot.value, user.email))
 const isParticipant = computed(() => puedeActuarComercialEnCotizacion(user, cot.value))
 const isSoloParticipante = computed(() => isParticipant.value && !isOwner.value)
+/** Supervisora/compras (flag) o el comercial de esta cotización (dueño o participante). */
+const canGestionarParticipantes = computed(() => user.canCotizar || isParticipant.value)
 const participantesActuales = computed(() => participantesOf(cot.value))
 const comercialesParaParticipante = computed(() => {
   const uids = new Set(participanteUidsLocales.value)
@@ -348,20 +350,19 @@ function fmtMoney(n?: number | null) {
   return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(v)
 }
 
+function lineaCompra(a: any, i: number) {
+  return mapArticuloCompradoAntes(a || {}, i, {
+    compradoAntes: cot.value?.compradoAntes,
+    precioAnterior: cot.value?.precioAnterior ?? null,
+  })
+}
+
 function lineaCompradoAntes(a: any, i: number) {
-  if (a.compradoAntes) return true
-  if (i === 0 && cot.value?.compradoAntes && a.compradoAntes == null) return true
-  return false
+  return lineaCompra(a, i).compradoAntes
 }
 
 function lineaPrecioAnterior(a: any, i: number): number | null {
-  if (a.compradoAntes || a.precioAnterior != null) {
-    return a.precioAnterior != null ? Number(a.precioAnterior) : null
-  }
-  if (i === 0 && cot.value?.compradoAntes && cot.value?.precioAnterior != null) {
-    return Number(cot.value.precioAnterior)
-  }
-  return null
+  return lineaCompra(a, i).precioAnterior
 }
 
 function lineaTieneExtras(a: any, i: number) {
@@ -369,8 +370,26 @@ function lineaTieneExtras(a: any, i: number) {
     a.precioSolicitado != null
     || a.precioCompetencia != null
     || lineaCompradoAntes(a, i)
+    || a.precioAnterior != null
   )
 }
+
+const lineasIndicacionesComercial = computed(() => {
+  return (cot.value?.articulos || []).map((a: any, i: number) => {
+    const identidad = hydrateArticuloIdentidad(a || {})
+    const compra = lineaCompra(a, i)
+    return {
+      i,
+      label: articuloLabel(identidad),
+      precioSolicitado: a?.precioSolicitado != null ? Number(a.precioSolicitado) : null,
+      precioCompetencia: a?.precioCompetencia != null ? Number(a.precioCompetencia) : null,
+      compradoAntes: compra.compradoAntes,
+      precioAnterior: compra.precioAnterior,
+    }
+  }).filter((x: any) =>
+    x.precioSolicitado != null || x.precioCompetencia != null || x.compradoAntes || x.precioAnterior != null
+  )
+})
 
 
 // Snapshots
@@ -759,7 +778,7 @@ async function abrirParticipantes() {
 }
 
 async function confirmarParticipante() {
-  if (!participanteSeleccionado.value || !cot.value || !user.canGestionarParticipantes) return
+  if (!participanteSeleccionado.value || !cot.value || !canGestionarParticipantes.value) return
   participantesSaving.value = true
   try {
     const comercial = participanteSeleccionado.value
@@ -833,7 +852,7 @@ async function confirmarParticipante() {
 }
 
 async function quitarParticipante(p: { uid: string; nombre?: string | null }) {
-  if (!cot.value || !user.canGestionarParticipantes || !p.uid) return
+  if (!cot.value || !canGestionarParticipantes.value || !p.uid) return
   participantesSaving.value = true
   try {
     const participantes = participantesActuales.value.filter(x => x.uid !== p.uid)
@@ -1832,7 +1851,7 @@ async function agregarLinea() {
                 </div>
                 <div class="detail-card__actions">
                   <v-btn
-                    v-if="user.canGestionarParticipantes"
+                    v-if="canGestionarParticipantes"
                     variant="tonal"
                     color="indigo"
                     size="small"
@@ -2002,9 +2021,9 @@ async function agregarLinea() {
                   </div>
 
                   <div
-                    v-if="user.canGestionarParticipantes || participantesActuales.length || (isParticipant && !isOwner)"
+                    v-if="canGestionarParticipantes || participantesActuales.length"
                     class="participantes-strip"
-                    :class="{ 'participantes-strip--guest': isParticipant && !isOwner && !user.canGestionarParticipantes }"
+                    :class="{ 'participantes-strip--guest': isSoloParticipante && !canGestionarParticipantes }"
                   >
                     <div class="participantes-strip__head">
                       <span class="participantes-strip__icon-wrap">
@@ -2019,9 +2038,9 @@ async function agregarLinea() {
                         </div>
                         <span class="participantes-strip__hint">
                           <template v-if="isSoloParticipante">
-                            Estás siguiendo esta cotización como participante. Puedes comentar, editar y solicitar recotización.
+                            Estás siguiendo esta cotización como participante. Puedes añadir a otros comerciales, comentar, editar y solicitar recotización.
                           </template>
-                          <template v-else-if="user.canGestionarParticipantes">
+                          <template v-else-if="canGestionarParticipantes">
                             Añade comerciales de otras marcas o áreas para que vean la cotización y reciban email y Slack.
                           </template>
                           <template v-else>
@@ -2030,7 +2049,7 @@ async function agregarLinea() {
                         </span>
                       </div>
                       <v-btn
-                        v-if="user.canGestionarParticipantes"
+                        v-if="canGestionarParticipantes"
                         color="indigo"
                         variant="flat"
                         size="small"
@@ -2065,7 +2084,7 @@ async function agregarLinea() {
                           <span class="participantes-strip__person-role">Participante</span>
                         </div>
                         <v-btn
-                          v-if="user.canGestionarParticipantes"
+                          v-if="canGestionarParticipantes"
                           icon
                           variant="text"
                           size="x-small"
@@ -2077,7 +2096,7 @@ async function agregarLinea() {
                         </v-btn>
                       </div>
 
-                      <div v-if="user.canGestionarParticipantes && !participantesActuales.length" class="participantes-strip__empty">
+                      <div v-if="canGestionarParticipantes && !participantesActuales.length" class="participantes-strip__empty">
                         <Icon name="mdi:account-plus-outline" />
                         Sin participantes extra todavía
                       </div>
@@ -2135,6 +2154,10 @@ async function agregarLinea() {
                             </v-chip>
                           </dd>
                         </div>
+                        <div v-if="cot.licitacion || cot.clienteFinal" class="detail-field">
+                          <dt>Cliente final</dt>
+                          <dd>{{ cot.clienteFinal || '—' }}</dd>
+                        </div>
                       </dl>
                     </section>
 
@@ -2157,6 +2180,36 @@ async function agregarLinea() {
                           <dd>{{ cot.condicionesEspeciales || '—' }}</dd>
                         </div>
                       </dl>
+                    </section>
+
+                    <section v-if="lineasIndicacionesComercial.length" class="detail-section">
+                      <h4 class="detail-section__title">
+                        <Icon name="mdi:tag-text-outline" />
+                        Precios indicados por el comercial
+                      </h4>
+                      <div class="comercial-hints">
+                        <article
+                          v-for="linea in lineasIndicacionesComercial"
+                          :key="linea.i"
+                          class="comercial-hint"
+                        >
+                          <div class="comercial-hint__name">{{ linea.label }}</div>
+                          <div class="comercial-hint__metrics">
+                            <div v-if="linea.precioSolicitado != null" class="comercial-hint__metric">
+                              <span>Solicitado</span>
+                              <strong>{{ fmtMoney(linea.precioSolicitado) }}</strong>
+                            </div>
+                            <div v-if="linea.precioCompetencia != null" class="comercial-hint__metric">
+                              <span>Competencia</span>
+                              <strong>{{ fmtMoney(linea.precioCompetencia) }}</strong>
+                            </div>
+                            <div v-if="linea.compradoAntes || linea.precioAnterior != null" class="comercial-hint__metric comercial-hint__metric--prev">
+                              <span>Precio anterior</span>
+                              <strong>{{ linea.precioAnterior != null ? fmtMoney(linea.precioAnterior) : 'Sí, sin importe' }}</strong>
+                            </div>
+                          </div>
+                        </article>
+                      </div>
                     </section>
 
                     <section class="detail-section">
@@ -2276,6 +2329,20 @@ async function agregarLinea() {
                             </span>
                           </template>
                           <span v-else class="text-medium-emphasis">—</span>
+                        </span>
+                      </div>
+                      <div v-if="a.precioSolicitado != null" class="articulo-metric">
+                        <span class="articulo-metric__label">Precio solicitado / ud.</span>
+                        <span class="articulo-metric__value">{{ fmtMoney(Number(a.precioSolicitado || 0)) }}</span>
+                      </div>
+                      <div v-if="a.precioCompetencia != null" class="articulo-metric">
+                        <span class="articulo-metric__label">Precio competencia / ud.</span>
+                        <span class="articulo-metric__value">{{ fmtMoney(Number(a.precioCompetencia || 0)) }}</span>
+                      </div>
+                      <div v-if="lineaCompradoAntes(a, i) || lineaPrecioAnterior(a, i) != null" class="articulo-metric articulo-metric--prev">
+                        <span class="articulo-metric__label">Precio anterior / ud.</span>
+                        <span class="articulo-metric__value">
+                          {{ lineaPrecioAnterior(a, i) != null ? fmtMoney(lineaPrecioAnterior(a, i)) : 'Indicada compra anterior' }}
                         </span>
                       </div>
                     </div>
@@ -3980,6 +4047,51 @@ async function agregarLinea() {
 .articulo-metric--highlight {
   background: #fff;
   border-color: #e2e8f0;
+}
+.articulo-metric--prev {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+}
+.comercial-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.comercial-hint {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
+}
+.comercial-hint__name {
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+.comercial-hint__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.comercial-hint__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 8rem;
+}
+.comercial-hint__metric span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.comercial-hint__metric strong {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+.comercial-hint__metric--prev strong {
+  color: #0369a1;
 }
 .articulo-metric__label {
   display: block;

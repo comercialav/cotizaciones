@@ -74,7 +74,8 @@ export const useUserStore = defineStore("user", {
         return false
       }
     },
-    /** Añadir / quitar participantes. Mismo flag que cotizar. */
+    /** Añadir / quitar participantes a nivel de rol (supervisora / compras con flag).
+     * En la ficha, el comercial dueño o participante también puede. */
     canGestionarParticipantes(): boolean {
       return this.canCotizar
     },

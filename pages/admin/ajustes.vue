@@ -74,7 +74,7 @@ async function save() {
             Ahora mismo compras <strong>sí</strong> puede cotizar y gestionar participantes.
           </template>
           <template v-else>
-            Ahora mismo solo la supervisora (y admin) puede cotizar y gestionar participantes.
+            Ahora mismo solo la supervisora (y admin) puede cotizar. Los comerciales sí pueden añadir participantes en sus cotizaciones.
           </template>
         </v-alert>
 

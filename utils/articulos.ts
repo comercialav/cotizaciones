@@ -93,10 +93,10 @@ export function mapArticuloCompradoAntes(
 ): { compradoAntes: boolean; precioAnterior: number | null } {
   const lineHasFlag = a.compradoAntes != null || a.precioAnterior != null
   if (lineHasFlag) {
-    const compradoAntes = !!a.compradoAntes
-    const precioAnterior = compradoAntes && a.precioAnterior != null && a.precioAnterior !== ''
+    const precioAnterior = a.precioAnterior != null && a.precioAnterior !== '' && !Number.isNaN(Number(a.precioAnterior))
       ? Number(a.precioAnterior)
       : null
+    const compradoAntes = !!a.compradoAntes || precioAnterior != null
     return { compradoAntes, precioAnterior }
   }
   if (legacy?.compradoAntes && idx === 0) {
