@@ -3,6 +3,7 @@ import { promises as fs } from "fs"
 import path from "path"
 import nodemailer from "nodemailer"
 import type { StockEstado } from '~/utils/stock'
+import { mapArticuloCompradoAntes, formatPrecioAnteriorLinea } from '~/utils/articulos'
 
 /* ===========================
  * Helpers de plantillas
@@ -38,14 +39,21 @@ export function renderItemsTable(articulos: any[] = [], stockEstadoOrLegacy?: bo
   const sinStock = stockEstadoOrLegacy === false || stockEstadoOrLegacy === 'sin_stock'
   const parcial = stockEstadoOrLegacy === 'parcial'
 
-  const rows = (articulos||[]).map(a=>{
+  const rows = (articulos||[]).map((a, i)=>{
     const u = Number(a.unidades||0)
     const pCliente = Number(a.precioCliente||0)
     const pSolic = a.precioSolicitado!=null ? Number(a.precioSolicitado) : null
-    const compradoAnt = a.compradoAntes ? 'Sí' : 'No'
-    const pAnt = a.compradoAntes && a.precioAnterior != null
-      ? `€ ${Number(a.precioAnterior).toFixed(2)}`
-      : '—'
+    const compra = mapArticuloCompradoAntes(a || {}, i)
+    const compradoAnt = compra.compradoAntes ? 'Sí' : 'No'
+    const pAnt = formatPrecioAnteriorLinea(compra)
+    const pAntStyle = compra.compradoAntes && compra.precioAnterior != null
+      ? 'padding:8px 6px;border-bottom:1px solid #eeeef0;background:#e8f1fb;font-weight:700;color:#0f172a;'
+      : 'padding:8px 6px;border-bottom:1px solid #eeeef0;'
+    const compraBadge = compra.compradoAntes
+      ? `<div style="margin-top:6px;display:inline-block;background:#e8f1fb;color:#1565c0;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;">
+           Compra anterior${compra.precioAnterior != null ? `: € ${Number(compra.precioAnterior).toFixed(2)}` : ''}
+         </div>`
+      : ''
 
     const noStockBadge = sinStock
       ? `<span style="
@@ -74,12 +82,13 @@ export function renderItemsTable(articulos: any[] = [], stockEstadoOrLegacy?: bo
       <td style="padding:8px 6px;border-bottom:1px solid #eeeef0;">
         <div style="font-weight:bold;color:#191919">${a.articulo ?? "—"} ${noStockBadge}</div>
         ${a.url ? `<div><a href="${a.url}" target="_blank" style="color:#3c9ae0;text-decoration:underline">${a.url}</a></div>` : ""}
+        ${compraBadge}
       </td>
       ${td(String(u))}
       ${td(`€ ${pCliente.toFixed(2)}`)}
       ${td(pSolic!=null ? `€ ${pSolic.toFixed(2)}` : "—")}
       ${td(compradoAnt)}
-      ${td(pAnt)}
+      <td align="right" style="${pAntStyle}">${pAnt}</td>
       ${td(`€ ${(u * (pSolic ?? 0)).toFixed(2)}`)}
     </tr>`
   }).join("")
@@ -107,21 +116,29 @@ export function renderItemsTable(articulos: any[] = [], stockEstadoOrLegacy?: bo
 export function renderCotizadaTable(articulos: any[] = []) {
   const th = (t:string)=>`<th align="right" style="padding:8px 6px;border-bottom:1px solid #eeeef0;">${t}</th>`
   const td = (v:string, right=true)=>`<td ${right?'align="right"':''} style="padding:8px 6px;border-bottom:1px solid #eeeef0;">${v}</td>`
-  const rows = (articulos||[]).map(a=>{
+  const rows = (articulos||[]).map((a, i)=>{
     const u = Number(a.unidades||0)
     const pTar = Number(a.precioCliente||0)
     const pSol = a.precioSolicitado!=null ? Number(a.precioSolicitado) : null
     const pComp= a.precioCompetencia!=null ? Number(a.precioCompetencia) : null
     const pCot = a.precioCotizado!=null ? Number(a.precioCotizado) : null
-    const compradoAnt = a.compradoAntes ? 'Sí' : 'No'
-    const pAnt = a.compradoAntes && a.precioAnterior != null
-      ? `€ ${Number(a.precioAnterior).toFixed(2)}`
-      : '—'
+    const compra = mapArticuloCompradoAntes(a || {}, i)
+    const compradoAnt = compra.compradoAntes ? 'Sí' : 'No'
+    const pAnt = formatPrecioAnteriorLinea(compra)
+    const pAntStyle = compra.compradoAntes && compra.precioAnterior != null
+      ? 'padding:8px 6px;border-bottom:1px solid #eeeef0;background:#e8f1fb;font-weight:700;color:#0f172a;'
+      : 'padding:8px 6px;border-bottom:1px solid #eeeef0;'
+    const compraBadge = compra.compradoAntes
+      ? `<div style="margin-top:6px;display:inline-block;background:#e8f1fb;color:#1565c0;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;">
+           Compra anterior${compra.precioAnterior != null ? `: € ${Number(compra.precioAnterior).toFixed(2)}` : ''}
+         </div>`
+      : ''
     return `
     <tr>
       <td style="padding:8px 6px;border-bottom:1px solid #eeeef0;">
         <div style="font-weight:bold;color:#191919">${a.articulo ?? "—"}</div>
         ${a.url ? `<div><a href="${a.url}" target="_blank" style="color:#3c9ae0;text-decoration:underline">${a.url}</a></div>` : ""}
+        ${compraBadge}
       </td>
       ${td(String(u))}
       ${td(`€ ${pTar.toFixed(2)}`)}
@@ -129,7 +146,7 @@ export function renderCotizadaTable(articulos: any[] = []) {
       ${td(pComp!=null ? `€ ${pComp.toFixed(2)}` : "—")}
       ${td(pCot!=null ? `€ ${pCot.toFixed(2)}` : "—")}
       ${td(compradoAnt)}
-      ${td(pAnt)}
+      <td align="right" style="${pAntStyle}">${pAnt}</td>
       ${td(`€ ${(u*pTar).toFixed(2)}`)}
       ${td(pCot!=null ? `€ ${(u*pCot).toFixed(2)}` : "—")}
     </tr>`

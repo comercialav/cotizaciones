@@ -29,8 +29,6 @@ type Row = {
   proveedor?: string | null
   compradoAntes?: boolean
   precioAnterior?: number | null
-  mostrarSolicitado?: boolean
-  mostrarCompetencia?: boolean
 }
 type AdjuntoDB = {
   id: string
@@ -78,7 +76,6 @@ const articulos = ref<Row[]>([
     precioCoste: null,
     proveedor: '',
     compradoAntes: false, precioAnterior: null,
-    mostrarSolicitado: false, mostrarCompetencia: false,
   },
 ])
 
@@ -89,21 +86,6 @@ const isLocked = (i: number) => {
 }
 
 const errores = ref<string[]>([])
-
-const urlDialog = ref(false)
-const urlDraft  = ref("")
-const urlIndex  = ref<number|null>(null)
-function openUrlDialog(i:number){
-  urlIndex.value=i
-  urlDraft.value=articulos.value[i].url||""
-  urlDialog.value=true
-}
-function saveUrl(){
-  if(urlIndex.value!==null){
-    articulos.value[urlIndex.value].url=(urlDraft.value||"").trim()
-  }
-  urlDialog.value=false
-}
 
 // ======= ADJUNTOS =======
 const adjuntos = ref<File[]>([])
@@ -181,8 +163,6 @@ onMounted(async () => {
           proveedor: a.proveedor ? String(a.proveedor).trim() : '',
           compradoAntes: compra.compradoAntes,
           precioAnterior: compra.precioAnterior,
-          mostrarSolicitado: a.precioSolicitado != null,
-          mostrarCompetencia: a.precioCompetencia != null,
         }
       })
     articulos.value = base
@@ -217,7 +197,6 @@ function addArticulo() {
     precioCoste: null,
     proveedor: '',
     compradoAntes: false, precioAnterior: null,
-    mostrarSolicitado: false, mostrarCompetencia: false,
   })
   console.log('[FORM] addArticulo -> total filas:', articulos.value.length)
 }
@@ -271,18 +250,24 @@ const vendedorDisplay = computed(() =>
 )
 const isSubmitting = computed(() => Boolean(props.loading || cotStore.saving))
 
-function onCompradoAntesChange(row: Row, val: boolean | null) {
-  if (!val) row.precioAnterior = null
+function toMoneyOrNull(v: unknown): number | null {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function lineTotal(row: Row) {
+  return ((Number(row.unidades) || 0) * (Number(row.precioCliente) || 0)).toFixed(2)
 }
 
 function validarPrecioAnterior(a: Row, i: number) {
-  if (!a.compradoAntes) return
   const p = a.precioAnterior
-  if (p === null || p === undefined || String(p).trim() === '' || isNaN(Number(p)) || Number(p) < 0) {
-    errores.value.push(`Artículo ${i + 1}: indica el precio anterior (obligatorio si ya se compró antes).`)
+  if (p === null || p === undefined || String(p).trim() === '') return
+  if (isNaN(Number(p)) || Number(p) < 0) {
+    errores.value.push(`Artículo ${i + 1}: el precio de compra anterior debe ser ≥ 0.`)
   }
 }
-const positive = (v:any)=> (v===null || v===undefined || Number(v) >= 0) || "Debe ser ≥ 0"
+const positive = (v:any)=> (v===null || v===undefined || v==='' || Number(v) >= 0) || "Debe ser ≥ 0"
 
 // ======= validación / submit =======
 const snackbar = ref<{show:boolean; text:string; color:string}>({show:false,text:"",color:"success"})
@@ -413,16 +398,20 @@ function onSubmit() {
       precioCliente: Number(a.precioCliente||0),
     }
     if (!isComprasArticlesView.value) {
-      if (a.precioSolicitado != null) r.precioSolicitado = Number(a.precioSolicitado)
-      const compra = mapArticuloCompradoAntes(a, idx, legacyCompra)
-      if (compra.compradoAntes) {
-        r.compradoAntes = true
-        r.precioAnterior = compra.precioAnterior != null ? Number(compra.precioAnterior) : Number(a.precioAnterior)
-      } else {
-        r.compradoAntes = false
-      }
+      const solicitado = toMoneyOrNull(a.precioSolicitado)
+      if (solicitado != null) r.precioSolicitado = solicitado
+      else if (props.mode === 'edit') r.precioSolicitado = null
+      const compra = mapArticuloCompradoAntes({
+        ...a,
+        precioAnterior: toMoneyOrNull(a.precioAnterior),
+        compradoAntes: toMoneyOrNull(a.precioAnterior) != null,
+      }, idx, legacyCompra)
+      r.compradoAntes = compra.compradoAntes
+      r.precioAnterior = compra.compradoAntes ? (compra.precioAnterior ?? null) : null
     }
-    if (a.precioCompetencia != null) r.precioCompetencia = Number(a.precioCompetencia)
+    const competencia = toMoneyOrNull(a.precioCompetencia)
+    if (competencia != null) r.precioCompetencia = competencia
+    else if (props.mode === 'edit') r.precioCompetencia = null
     if (isComprasArticlesView.value) {
       if (a.precioCoste != null && a.precioCoste !== '' && !isNaN(Number(a.precioCoste))) {
         r.precioCoste = Number(a.precioCoste)
@@ -443,9 +432,17 @@ function onSubmit() {
         mergeArticuloEdicion(originals[i], sanitize(a, i)),
       )
     } else {
-      const originales = originals.map((a:any, i:number) =>
-        mergeArticuloEdicion(a, sanitize(a, i)),
-      )
+      const originales = originals.map((a:any, i:number) => {
+        const formRow = articulos.value[i]
+        const patched = formRow && !isComprasArticlesView.value
+          ? {
+              ...a,
+              compradoAntes: formRow.compradoAntes,
+              precioAnterior: formRow.precioAnterior,
+            }
+          : a
+        return mergeArticuloEdicion(a, sanitize(patched, i))
+      })
       const nuevos = articulos.value.slice(originalCount.value).map((a, i) =>
         sanitize(a, originalCount.value + i),
       )
@@ -640,274 +637,176 @@ function onSubmit() {
       <span>Artículos</span>
     </div>
 
-    <div class="table-wrap">
-      <table class="modern-table">
-        <thead>
-          <tr>
-            <th style="min-width:140px">Código producto</th>
-            <th style="min-width:220px">Descripción producto</th>
-            <th class="text-center" style="width:74px">URL</th>
-            <th class="num-units">Unid.</th>
-            <th class="num" style="width:150px">Precio Tarifa (€)</th>
-            <th v-if="!isComprasArticlesView" class="num" style="width:150px">
-              <div class="d-flex align-center ga-1">
-                <span>Solicitado (€)</span>
-                <v-tooltip :key="'th-sol'">
-                  <template #activator="{ props: tipS }">
-                    <span v-bind="tipS" class="cursor-pointer">
-                      <Icon name="mdi:information-outline" />
-                    </span>
-                  </template>
-                  <template #default>Precio propuesto por el cliente. (Opcional)</template>
-                </v-tooltip>
-              </div>
-            </th>
+    <p class="articles-lead">
+      Arriba el producto y la tarifa. Abajo, solo si el cliente te lo ha dicho.
+    </p>
 
-            <!-- Competencia -->
-            <th class="num" style="width:150px">
-              <div class="d-flex align-center ga-1">
-                <span>Competencia (€)</span>
-                <v-tooltip :key="'th-comp'" >
-                  <template #activator="{ props: tipC }">
-                    <span v-bind="tipC" class="cursor-pointer">
-                      <Icon name="mdi:information-outline" />
-                    </span>
-                  </template>
-                   <template #default>Precio observado en competidor. (Opcional)</template>
-                </v-tooltip>
-              </div>
-            </th>
-            <th v-if="isComprasArticlesView" class="num" style="width:150px">
-              <div class="d-flex align-center ga-1">
-                <span>Precio coste (€)</span>
-                <v-tooltip>
-                  <template #activator="{ props: tipCoste }">
-                    <span v-bind="tipCoste" class="cursor-pointer">
-                      <Icon name="mdi:information-outline" />
-                    </span>
-                  </template>
-                  <template #default>Precio de coste de compra para esta línea.</template>
-                </v-tooltip>
-              </div>
-            </th>
-            <th v-if="isComprasArticlesView" style="min-width:160px">
-              <div class="d-flex align-center ga-1">
-                <span>Proveedor</span>
-                <v-tooltip>
-                  <template #activator="{ props: tipProv }">
-                    <span v-bind="tipProv" class="cursor-pointer">
-                      <Icon name="mdi:information-outline" />
-                    </span>
-                  </template>
-                  <template #default>Proveedor de compra para esta línea.</template>
-                </v-tooltip>
-              </div>
-            </th>
-            <th v-if="!isComprasArticlesView" class="num line-compra-ant" style="width:150px">
-              <div class="d-flex align-center ga-1">
-                <span>Compra ant.</span>
-                <v-tooltip>
-                  <template #activator="{ props: tipA }">
-                    <span v-bind="tipA" class="cursor-pointer">
-                      <Icon name="mdi:information-outline" />
-                    </span>
-                  </template>
-                  <template #default>Si el cliente ya compró este artículo antes, indica el precio anterior.</template>
-                </v-tooltip>
-              </div>
-            </th>
-            <th class="num" style="width:130px">Total</th>
-            <th style="width:56px"></th>
-          </tr>
-        </thead>
-
-        <tbody>
-          <tr v-for="(row, i) in articulos" :key="i" :class="{ 'row-locked': isLocked(i) }">
-            <!-- Código + descripción -->
-            <td>
-              <div class="d-flex align-center ga-2">
-                <Icon v-if="isLocked(i)" name="mdi:lock-outline" class="lock-icon" title="Artículo original bloqueado" />
-                <v-text-field
-                  v-model="row.codigoProducto"
-                  variant="outlined" density="compact" hide-details
-                  placeholder="Código"
-                  :disabled="isLocked(i)"
-                  style="min-width:120px"
-                  required
-                >
-                  <template #prepend-inner><Icon name="mdi:barcode" /></template>
-                </v-text-field>
-              </div>
-            </td>
-            <td>
-              <v-text-field
-                v-model="row.descripcionProducto"
-                variant="outlined" density="compact" hide-details
-                placeholder="Descripción del producto"
-                :disabled="isLocked(i)"
-                class="flex-grow-1"
-                required
-              >
-                <template #prepend-inner><Icon name="mdi:text-box-outline" /></template>
-              </v-text-field>
-            </td>
-
-            <!-- URL como botón + modal -->
-            <td class="text-center">
-              <v-btn size="small" variant="tonal" @click="openUrlDialog(i)" :disabled="isLocked(i)">
-                <template #prepend><Icon name="mdi:link-variant"/></template>
-                {{ row.url ? 'Editar' : 'Añadir' }}
-              </v-btn>
-            </td>
-
-            <!-- Unidades estrecho -->
-            <td class="num-units">
-              <v-text-field
-                v-model.number="row.unidades" :rules="[positive]"
-                type="number" min="0"
-                variant="outlined" density="compact" hide-details
-                class="units-input"
-                :disabled="isLocked(i)"
-              />
-            </td>
-
-            <!-- Precio tarifa estrecho -->
-            <td class="num">
-              <v-text-field
-                v-model.number="row.precioCliente" :rules="[positive]"
-                type="number" min="0"
-                variant="outlined" density="compact" hide-details
-                style="max-width:150px"
-                :disabled="isLocked(i)"
-              >
-                <template #prepend-inner><Icon name="mdi:currency-eur" /></template>
-              </v-text-field>
-            </td>
-
-            <!-- Solicitado (solo comerciales / supervisora) -->
-    <td v-if="!isComprasArticlesView" class="num">
-      <div class="d-flex align-center ga-1">
-        <v-text-field
-          v-if="row.mostrarSolicitado"
-          v-model.number="row.precioSolicitado" :rules="[positive]"
-          type="number" min="0" variant="outlined" density="compact" hide-details
-          :disabled="isLocked(i)"
-          style="max-width:140px" placeholder="Solicitado">
-          <template #prepend-inner><Icon name="mdi:currency-eur" /></template>
-        </v-text-field>
-
-        <v-tooltip v-else :key="'tfield-sol'" text="Añadir precio solicitado">
-          <template #activator="{ props: tipS }">
-            <span v-bind="tipS">
-              <v-btn icon variant="text" @click="row.mostrarSolicitado = true" :disabled="isLocked(i)">
-                <Icon name="mdi:plus" />
-              </v-btn>
-            </span>
-          </template>
-        </v-tooltip>
-      </div>
-    </td>
-
-    <!-- Competencia -->
-    <td class="num">
-      <div class="d-flex align-center ga-1">
-        <v-text-field
-          v-if="row.mostrarCompetencia"
-          v-model.number="row.precioCompetencia" :rules="[positive]"
-          type="number" min="0" variant="outlined" density="compact" hide-details
-          style="max-width:140px" placeholder="Compet."
-          :disabled="isLocked(i)">
-          <template #prepend-inner><Icon name="mdi:sword-cross" /></template>
-        </v-text-field>
-
-        <v-tooltip v-else :key="'tfield-comp'" text="Añadir precio de la competencia">
-          <template #activator="{ props: tipC }">
-            <span v-bind="tipC">
-              <v-btn icon variant="text" :disabled="isLocked(i)" @click="row.mostrarCompetencia = true">
-                <Icon name="mdi:plus" />
-              </v-btn>
-            </span>
-          </template>
-        </v-tooltip>
-      </div>
-    </td>
-
-    <!-- Precio coste (solo Compras) -->
-    <td v-if="isComprasArticlesView" class="num">
-      <v-text-field
-        v-model.number="row.precioCoste"
-        :rules="[positive]"
-        type="number"
-        min="0"
-        step="0.01"
-        variant="outlined"
-        density="compact"
-        hide-details
-        style="max-width:150px"
-        placeholder="Coste"
-        :disabled="isLocked(i)"
+    <div class="article-list">
+      <article
+        v-for="(row, i) in articulos"
+        :key="i"
+        class="article-line"
+        :class="{ 'is-locked': isLocked(i), 'is-compras': isComprasArticlesView }"
       >
-        <template #prepend-inner><Icon name="mdi:tag-outline" /></template>
-      </v-text-field>
-    </td>
+        <div class="article-line__head">
+          <div class="article-line__who">
+            <Icon v-if="isLocked(i)" name="mdi:lock-outline" class="lock-icon" title="Artículo original bloqueado" />
+            <span class="article-line__index">{{ String(i + 1).padStart(2, '0') }}</span>
+            <span class="article-line__name">Artículo</span>
+          </div>
+          <div class="article-line__head-meta">
+            <span class="article-line__total">{{ lineTotal(row) }} €</span>
+            <v-btn icon variant="text" :disabled="isLocked(i)" aria-label="Eliminar artículo" @click="removeArticulo(i)">
+              <Icon name="mdi:trash-can-outline" />
+            </v-btn>
+          </div>
+        </div>
 
-    <!-- Proveedor (solo Compras) -->
-    <td v-if="isComprasArticlesView">
-      <v-text-field
-        v-model="row.proveedor"
-        variant="outlined"
-        density="compact"
-        hide-details
-        style="min-width:150px"
-        placeholder="Proveedor"
-        :disabled="isLocked(i)"
-      >
-        <template #prepend-inner><Icon name="mdi:truck-delivery-outline" /></template>
-      </v-text-field>
-    </td>
+        <div class="article-line__grid article-line__grid--id">
+          <v-text-field
+            v-model="row.codigoProducto"
+            label="Código"
+            variant="outlined"
+            density="compact"
+            hide-details
+            :disabled="isLocked(i)"
+            required
+          >
+            <template #prepend-inner><Icon name="mdi:barcode" /></template>
+          </v-text-field>
 
-    <!-- Compra anterior (solo comerciales / supervisora) -->
-    <td v-if="!isComprasArticlesView" class="num line-compra-ant">
-      <div class="line-compra-ant__cell">
-        <v-switch
-          v-model="row.compradoAntes"
-          density="compact"
-          hide-details
-          color="primary"
-          :disabled="isLocked(i)"
-          @update:model-value="(v) => onCompradoAntesChange(row, v)"
-        />
+          <v-text-field
+            v-model="row.descripcionProducto"
+            label="Descripción"
+            variant="outlined"
+            density="compact"
+            hide-details
+            :disabled="isLocked(i)"
+            class="article-line__desc"
+            required
+          >
+            <template #prepend-inner><Icon name="mdi:text-box-outline" /></template>
+          </v-text-field>
+        </div>
+
         <v-text-field
-          v-if="row.compradoAntes"
-          v-model.number="row.precioAnterior"
-          type="number"
-          min="0"
-          density="compact"
+          v-model="row.url"
+          type="url"
+          label="Enlace"
+          placeholder="https://"
           variant="outlined"
+          density="compact"
           hide-details
-          placeholder="Precio ant."
-          style="max-width:130px"
           :disabled="isLocked(i)"
+          class="article-line__url"
         >
-          <template #prepend-inner><Icon name="mdi:history" /></template>
+          <template #prepend-inner><Icon name="mdi:link-variant" /></template>
         </v-text-field>
-      </div>
-    </td>
 
-            <!-- Total -->
-            <td class="num total-cell">
-              {{ ((Number(row.unidades)||0) * (Number(row.precioCliente)||0)).toFixed(2) }} €
-            </td>
+        <div class="article-line__grid article-line__grid--quote">
+          <v-text-field
+            v-model.number="row.unidades"
+            :rules="[positive]"
+            type="number"
+            min="0"
+            label="Unidades"
+            variant="outlined"
+            density="compact"
+            hide-details
+            :disabled="isLocked(i)"
+          />
+          <v-text-field
+            v-model.number="row.precioCliente"
+            :rules="[positive]"
+            type="number"
+            min="0"
+            label="Precio tarifa (€)"
+            variant="outlined"
+            density="compact"
+            hide-details
+            :disabled="isLocked(i)"
+          >
+            <template #prepend-inner><Icon name="mdi:currency-eur" /></template>
+          </v-text-field>
 
-            <!-- Eliminar -->
-            <td class="actions">
-              <v-btn icon :disabled="isLocked(i)" variant="text" @click="removeArticulo(i)">
-                <Icon name="mdi:trash-can-outline" />
-              </v-btn>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+          <template v-if="isComprasArticlesView">
+            <v-text-field
+              v-model.number="row.precioCoste"
+              :rules="[positive]"
+              type="number"
+              min="0"
+              step="0.01"
+              label="Precio coste (€)"
+              variant="outlined"
+              density="compact"
+              hide-details
+              :disabled="isLocked(i)"
+            >
+              <template #prepend-inner><Icon name="mdi:tag-outline" /></template>
+            </v-text-field>
+            <v-text-field
+              v-model="row.proveedor"
+              label="Proveedor"
+              variant="outlined"
+              density="compact"
+              hide-details
+              :disabled="isLocked(i)"
+            >
+              <template #prepend-inner><Icon name="mdi:truck-delivery-outline" /></template>
+            </v-text-field>
+          </template>
+        </div>
+
+        <div v-if="!isComprasArticlesView" class="article-line__hints">
+          <p class="article-line__hints-kicker">Opcional</p>
+          <div class="article-line__hints-row">
+            <v-text-field
+              v-model.number="row.precioSolicitado"
+              :rules="[positive]"
+              type="number"
+              min="0"
+              step="0.01"
+              label="Solicitado (€)"
+              variant="outlined"
+              density="compact"
+              hide-details
+              :disabled="isLocked(i)"
+              class="hint-field"
+            >
+              <template #prepend-inner><Icon name="mdi:currency-eur" /></template>
+            </v-text-field>
+            <v-text-field
+              v-model.number="row.precioCompetencia"
+              :rules="[positive]"
+              type="number"
+              min="0"
+              step="0.01"
+              label="Competencia (€)"
+              variant="outlined"
+              density="compact"
+              hide-details
+              :disabled="isLocked(i)"
+              class="hint-field"
+            >
+              <template #prepend-inner><Icon name="mdi:sword-cross" /></template>
+            </v-text-field>
+            <v-text-field
+              v-model.number="row.precioAnterior"
+              :rules="[positive]"
+              type="number"
+              min="0"
+              step="0.01"
+              label="Compra anterior (€)"
+              variant="outlined"
+              density="compact"
+              hide-details
+              class="hint-field"
+            >
+              <template #prepend-inner><Icon name="mdi:history" /></template>
+            </v-text-field>
+          </div>
+        </div>
+      </article>
     </div>
 
     <v-btn class="mt-3" color="primary" variant="elevated" @click="addArticulo">
@@ -936,21 +835,6 @@ function onSubmit() {
     </div>
   </v-card-text>
 </v-card>
-
-<!-- Modal URL -->
-<v-dialog v-model="urlDialog" max-width="520">
-  <v-card>
-    <v-card-title class="text-h6">Enlace del artículo</v-card-title>
-    <v-card-text>
-      <v-text-field v-model="urlDraft" type="url" label="URL" placeholder="https://..." variant="outlined" />
-    </v-card-text>
-    <v-card-actions>
-      <v-spacer />
-      <v-btn variant="text" @click="urlDialog=false">Cancelar</v-btn>
-      <v-btn color="primary" @click="saveUrl">Guardar</v-btn>
-    </v-card-actions>
-  </v-card>
-</v-dialog>
 
 <!-- Adjuntos -->
 <v-card v-if="!articulosOnly" class="glass mb-6" elevation="8">
@@ -1449,56 +1333,108 @@ function onSubmit() {
   display:flex; align-items:center; gap:.5rem;
   font-weight:600; margin-bottom: .75rem;
 }
-.table-wrap{ overflow-x:auto }
-.modern-table{
-  width:100%;
-  border-collapse: separate;
-  border-spacing: 0 10px;
+.articles-lead{
+  margin: 0 0 1rem;
+  max-width: 62ch;
+  color: #475569;
+  font-size: .875rem;
+  line-height: 1.45;
 }
-.modern-table thead th{
-  font-weight:600; color:#334155; text-align:left; padding:8px 10px;
+.article-list{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.modern-table tbody tr{
-  background:#fff;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, .06);
+.article-line{
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 12px 14px 14px;
 }
-.modern-table tbody tr.row-locked{
-  background:#f8fafc;
+.article-line.is-locked{
+  background: #f8fafc;
 }
-.modern-table tbody tr.row-locked td:first-child{
-  border-left: 3px solid #cbd5e1;
+.article-line__head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
 }
-.modern-table td{
-  padding:8px 10px; vertical-align:middle;
+.article-line__who{
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.modern-table .num{ min-width:140px; text-align:right }
-.modern-table .num-units{
-  width:88px;
-  min-width:88px;
-  max-width:88px;
-  text-align:center;
-  padding-left:8px;
-  padding-right:8px;
+.article-line__index{
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #1976d2;
+  font-size: .92rem;
 }
-.modern-table .num-units .units-input{
-  max-width:72px;
-  margin-inline:auto;
+.article-line__name{
+  color: #64748b;
+  font-size: .8rem;
+  font-weight: 600;
 }
-.modern-table .num-units :deep(input[type="number"]){
-  text-align:center;
+.article-line__head-meta{
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
-.line-compra-ant__cell{
-  display:flex;
-  flex-direction:column;
-  align-items:flex-end;
-  gap:6px;
-  min-width:130px;
+.article-line__total{
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  font-size: .95rem;
 }
-.line-compra-ant__cell :deep(.v-switch){
-  flex:none;
+.article-line__grid{
+  display: grid;
+  gap: 10px 12px;
+  align-items: start;
 }
-.total-cell{ font-weight:600; color:#0f172a }
-.actions{ width:56px; text-align:center }
+.article-line__grid--id{
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
+}
+.article-line__grid--quote{
+  grid-template-columns: 110px minmax(160px, 200px);
+  margin-top: 10px;
+}
+.article-line.is-compras .article-line__grid--quote{
+  grid-template-columns: 110px minmax(150px, 180px) minmax(150px, 180px) minmax(160px, 1fr);
+}
+.article-line__url{
+  margin-top: 10px;
+}
+.article-line__hints{
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+.article-line__hints-kicker{
+  margin: 0 0 8px;
+  font-size: .75rem;
+  font-weight: 600;
+  color: #64748b;
+}
+.article-line__hints-row{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+.hint-field{
+  min-width: 0;
+}
+@media (max-width: 900px){
+  .article-line__grid--id,
+  .article-line.is-compras .article-line__grid--quote,
+  .article-line__hints-row{
+    grid-template-columns: 1fr;
+  }
+  .article-line__grid--quote{
+    grid-template-columns: 1fr 1fr;
+  }
+}
 .sticky{
   position: sticky; top: 24px;
 }

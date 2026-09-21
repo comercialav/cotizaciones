@@ -5,7 +5,7 @@ import {
   getFirestore, collection, doc, runTransaction, serverTimestamp, setDoc
 } from "firebase/firestore"
 import { normalizeStockEstado, stockDisponibleLegacy, type StockEstado } from '~/utils/stock'
-import { cotizacionCompradoAntes, buildArticuloIdentidad, hydrateArticuloIdentidad } from '~/utils/articulos'
+import { cotizacionCompradoAntes, hydrateArticuloIdentidad, mapArticuloCompradoAntes } from '~/utils/articulos'
 import { workflowBadgeLabel, workflowBadgeColor } from '~/utils/workflow'
 
 type Articulo = {
@@ -170,8 +170,9 @@ export const useCotizacionesStore = defineStore("cotizaciones", {
     }
 
     // Normalizar líneas SIN dejar undefined
-    const articulos = (payload.articulos || []).map(a => {
+    const articulos = (payload.articulos || []).map((a, idx) => {
       const identidad = hydrateArticuloIdentidad(a as Record<string, unknown>)
+      const compra = mapArticuloCompradoAntes(a as Record<string, unknown>, idx)
       const out: any = {
         codigoProducto: identidad.codigoProducto,
         descripcionProducto: identidad.descripcionProducto,
@@ -179,6 +180,8 @@ export const useCotizacionesStore = defineStore("cotizaciones", {
         url: (a.url ?? '').trim(),
         unidades: Number(a.unidades || 0),
         precioCliente: Number(a.precioCliente || 0),
+        compradoAntes: compra.compradoAntes,
+        precioAnterior: compra.precioAnterior,
       }
       if (a.precioSolicitado != null) out.precioSolicitado = Number(a.precioSolicitado)
       if (a.precioCompetencia != null) out.precioCompetencia = Number(a.precioCompetencia)

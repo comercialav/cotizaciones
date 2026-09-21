@@ -46,6 +46,8 @@ async function guardarNueva(payload:any){
   // sanity sobre líneas de artículos
   const articulosClean = (datosForm.articulos || []).map((a:any) => {
   const r:any = {
+      codigoProducto: (a.codigoProducto || '').trim(),
+      descripcionProducto: (a.descripcionProducto || '').trim(),
       articulo: (a.articulo || '').trim(),
       url: (a.url || '').trim(),
       unidades: Number(a.unidades || 0),
@@ -55,9 +57,12 @@ async function guardarNueva(payload:any){
     if (a.precioCompetencia != null) r.precioCompetencia = Number(a.precioCompetencia)
     if (a.compradoAntes) {
       r.compradoAntes = true
-      r.precioAnterior = Number(a.precioAnterior)
+      r.precioAnterior = a.precioAnterior != null && a.precioAnterior !== '' && !Number.isNaN(Number(a.precioAnterior))
+        ? Number(a.precioAnterior)
+        : null
     } else {
       r.compradoAntes = false
+      r.precioAnterior = null
     }
     return r
   })
