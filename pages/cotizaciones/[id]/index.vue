@@ -545,7 +545,7 @@ async function addComment() {
               numero: cot.value?.numero,
               autor: user.nombre,
               destinatarios: {
-                compras: 'compras@comercialav.com',
+                compras: 'compras@av-online.es',
               },
             },
           });
@@ -726,7 +726,7 @@ async function setWorkflow(flow: 'en_revision'|'consultando'|'consultando_compra
   await updateDoc(doc($db, 'cotizaciones', id.value), { workflow: flow, updatedAt: serverTimestamp() })
   const msg = `🔄 ${user.nombre} cambió el estado de la cotización “${cot.value?.cliente || id.value}” a *${workflowLabel(flow)}*.`
   if (flow === 'consultando' || flow === 'consultando_compras') {
-    await notifySlack(msg, 'workflow', 'compras@comercialav.com')
+    await notifySlack(msg, 'workflow', 'compras@av-online.es')
   }
   if (flow === 'espera_comercial' || isSupervisor.value) await notifySlack(msg, 'workflow', destinatariosComercial())
   else if (flow === 'espera_cliente') await notifySlack(msg, 'workflow', supervisorEmail.value)

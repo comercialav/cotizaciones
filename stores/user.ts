@@ -52,7 +52,7 @@ export const useUserStore = defineStore("user", {
     isCompras(state): boolean {
       const mail = state.email?.toLowerCase() || ""
       const rol = (state.rol || "").toLowerCase()
-      return rol === "compras" || mail === "compras@comercialav.com"
+      return rol === "compras" || mail === "compras@av-online.es"
     },
     canEditarCoste(): boolean {
       return this.isSupervisor || this.isCompras
@@ -184,7 +184,7 @@ export const useUserStore = defineStore("user", {
             }
 
             // Fallback específico para compras por email, sin romper datos existentes
-            if (!this.rol && emailLower === "compras@comercialav.com") {
+            if (!this.rol && emailLower === "compras@av-online.es") {
               this.rol = "compras"
               this.esSupervisor = false
             }

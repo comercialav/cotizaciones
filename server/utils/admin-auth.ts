@@ -40,7 +40,7 @@ export function canBorrarCotizacion(
   const rol = String(profile?.rol || '').toLowerCase()
   const mail = email.toLowerCase()
 
-  if (rol === 'compras' || mail === 'compras@comercialav.com') return true
+  if (rol === 'compras' || mail === 'compras@av-online.es') return true
   if (rol === 'jefe_comercial' || rol === 'admin') return true
   if (rol.includes('vanes')) return true
   if (profile?.esSupervisor === true) return true

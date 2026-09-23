@@ -78,7 +78,7 @@ export function timestampPresent(v: unknown): boolean {
 export function authorEsCompras(author?: { rol?: string | null; email?: string | null } | null): boolean {
   const rol = (author?.rol || '').toLowerCase()
   const mail = (author?.email || '').toLowerCase()
-  return rol === 'compras' || mail === 'compras@comercialav.com'
+  return rol === 'compras' || mail === 'compras@av-online.es'
 }
 
 export function comentarioEsRespuestaCompras(c: {

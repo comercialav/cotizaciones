@@ -50,7 +50,7 @@ env:
   - variable: MAIL_PASS
     secret: MAIL_PASS
   - variable: MAIL_FROM
-    value: cotizaciones@comercialav.com
+    value: no-responder@av-online.es
     availability: [RUNTIME]
   - variable: SLACK_BOT_TOKEN
     secret: SLACK_BOT_TOKEN

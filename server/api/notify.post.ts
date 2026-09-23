@@ -31,7 +31,7 @@ async function resolveComprasEmails(body: any): Promise<string[]> {
     console.warn('[API] No se pudieron cargar emails de compras:', e?.message || e)
   }
 
-  return ['compras@comercialav.com']
+  return ['compras@av-online.es']
 }
 
 function hasStockConcern(body: any): boolean {
