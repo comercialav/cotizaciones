@@ -1308,6 +1308,11 @@ type LineaCotizar = {
 }
 const cotizarLineas = ref<LineaCotizar[]>([])
 const cotizarObs = ref<string>('')
+const cotizarAdjuntos = ref<File[]>([])
+const cotizarAdjuntosPicker = ref<File[] | File | null>([])
+const cotizarSaving = ref(false)
+const cotizarAdjuntoError = ref('')
+const COTIZAR_MAX_ADJUNTO = 10 * 1024 * 1024
 
 // --- popup solicitar recotización (comercial) ---
 const showRecotizar = ref(false)
@@ -1330,7 +1335,38 @@ function abrirCotizar(recotizar = false) {
     }
   })
   cotizarObs.value = modoRecotizar.value ? (cot.value.cotizadoObs || '') : ''
+  cotizarAdjuntos.value = []
+  cotizarAdjuntosPicker.value = []
+  cotizarAdjuntoError.value = ''
   showCotizar.value = true
+}
+
+function onCotizarFiles(payload: File | File[] | null) {
+  const list = !payload ? [] : Array.isArray(payload) ? payload : [payload]
+  const claves = new Set(cotizarAdjuntos.value.map(f => `${f.name}-${f.size}`))
+  const nuevos: File[] = []
+  const grandes: string[] = []
+  for (const f of list) {
+    if (f.size > COTIZAR_MAX_ADJUNTO) {
+      grandes.push(f.name)
+      continue
+    }
+    if (!claves.has(`${f.name}-${f.size}`)) nuevos.push(f)
+  }
+  cotizarAdjuntoError.value = grandes.length
+    ? `${grandes.join(', ')} supera 10 MB.`
+    : ''
+  if (nuevos.length) cotizarAdjuntos.value = [...cotizarAdjuntos.value, ...nuevos]
+}
+
+watch(cotizarAdjuntosPicker, (files) => {
+  if (!files || (Array.isArray(files) && !files.length)) return
+  onCotizarFiles(files)
+  cotizarAdjuntosPicker.value = []
+})
+
+function quitarCotizarAdjunto(i: number) {
+  cotizarAdjuntos.value.splice(i, 1)
 }
 
 function abrirRecotizar() {
@@ -1401,8 +1437,7 @@ const descuentoCotizarDlg = computed(() =>
 async function confirmarCotizacion() {
   if (!cot.value || !user.canCotizar) return
   // validación: todas las líneas con precioCotizado válido
-  if (cotizarFaltan.value) {
-    // puedes mostrar un snackbar si quieres
+  if (cotizarFaltan.value || cotizarSaving.value) {
     console.warn('Faltan precios cotizados válidos en alguna línea')
     return
   }
@@ -1413,7 +1448,38 @@ async function confirmarCotizacion() {
     precioCotizado: Number(cotizarLineas.value[idx].precioCotizado || 0),
   }))
 
+  cotizarSaving.value = true
+  const adjuntosNuevos: { nombre: string; url: string; tipo: string | null }[] = []
+
   try {
+    if (cotizarAdjuntos.value.length) {
+      await ensureAuth()
+      const pendientes = [...cotizarAdjuntos.value]
+      cotizarAdjuntos.value = []
+      for (const [i, f] of pendientes.entries()) {
+        try {
+          const path = `cotizaciones/${id.value}/adjuntos/${Date.now()}_${i}_${f.name}`
+          const fileRef = storageRef($storage, path)
+          await uploadBytes(fileRef, f)
+          const url = await getDownloadURL(fileRef)
+          await addDoc(collection($db, 'cotizaciones', id.value, 'adjuntos'), {
+            nombre: f.name,
+            url,
+            tipo: f.type || null,
+            size: f.size || null,
+            path,
+            origen: 'cotizacion',
+            createdAt: serverTimestamp(),
+            author: { uid: user.uid, nombre: user.nombre, rol: user.rol },
+          })
+          adjuntosNuevos.push({ nombre: f.name, url, tipo: f.type || null })
+        } catch (err) {
+          cotizarAdjuntos.value = pendientes.slice(i)
+          throw err
+        }
+      }
+    }
+
     // 1) actualizar doc principal
     await updateDoc(doc($db, 'cotizaciones', id.value), {
       articulos: nuevas,
@@ -1432,8 +1498,11 @@ async function confirmarCotizacion() {
     const msg = modoRecotizar.value
       ? `🔄 Recotización confirmada: total tarifa € ${totalTarifaDlg.value.toFixed(2)} · total cotizado € ${totalCotizadoDlg.value.toFixed(2)}`
       : `🧾 Cotización cerrada: total tarifa € ${totalTarifaDlg.value.toFixed(2)} · total cotizado € ${totalCotizadoDlg.value.toFixed(2)}`
+    const adjuntosNota = adjuntosNuevos.length
+      ? `\nAdjuntos: ${adjuntosNuevos.map(a => a.nombre).join(', ')}`
+      : ''
     await addDoc(collection($db, 'cotizaciones', id.value, 'comentarios'), {
-      texto: `${msg}${cotizarObs.value ? `\nObservaciones: ${cotizarObs.value}` : ''}`,
+      texto: `${msg}${cotizarObs.value ? `\nObservaciones: ${cotizarObs.value}` : ''}${adjuntosNota}`,
       tipo: 'actividad',
       fecha: serverTimestamp(),
       author: { uid: user.uid, nombre: user.nombre, rol: user.rol }
@@ -1459,7 +1528,7 @@ async function confirmarCotizacion() {
   }
 
   // líneas con totales por línea
-  const articulos = (cot.value?.articulos || []).map((a:any, i:number) => ({
+  const articulos = nuevas.map((a:any, i:number) => ({
     articulo: a.articulo || '',
     url: a.url || '',
     unidades: Number(a.unidades || 0),
@@ -1512,10 +1581,13 @@ async function confirmarCotizacion() {
       observaciones: cotizarObs.value || '',
 
       // por si quieres incluir adjuntos en el mail (opcional)
-      adjuntos: (attachments.value || []).map((a:any)=>({
-        id: a.id, nombre: a.nombre, url: a.url, tipo: a.tipo || null,
-        createdAt: a.createdAt?.seconds ? new Date(a.createdAt.seconds*1000).toISOString() : null
-      })),
+      adjuntos: [
+        ...(attachments.value || []).map((a:any)=>({
+          id: a.id, nombre: a.nombre, url: a.url, tipo: a.tipo || null,
+          createdAt: a.createdAt?.seconds ? new Date(a.createdAt.seconds*1000).toISOString() : null
+        })),
+        ...adjuntosNuevos.map(a => ({ nombre: a.nombre, url: a.url, tipo: a.tipo })),
+      ],
 
       destinatarios: {
         comercial: destinatariosComercial(),
@@ -1529,6 +1601,8 @@ async function confirmarCotizacion() {
 
   } catch (e) {
     console.error('Error al cotizar:', e)
+  } finally {
+    cotizarSaving.value = false
   }
 }
 const showAdd = ref(false)
@@ -2619,7 +2693,7 @@ async function agregarLinea() {
               <span class="detail-notice__icon"><Icon name="mdi:alert-circle-outline" /></span>
               <div>
                 <strong>Observaciones de cotización</strong>
-                <p class="mb-0">{{ cot.cotizadoObs }}</p>
+                <p class="detail-notice__body mb-0">{{ cot.cotizadoObs }}</p>
               </div>
             </v-card>
 
@@ -2930,7 +3004,40 @@ async function agregarLinea() {
                 <template #prepend-inner><Icon name="mdi:note-text-outline" /></template>
               </v-textarea>
 
-              <div class="d-flex justify-end ga-4 mt-2">
+              <v-file-input
+                v-model="cotizarAdjuntosPicker"
+                class="mt-4"
+                label="Adjuntar escandallo, albarán u otros"
+                hint="PDF, Excel o imagen. Máx. 10 MB por archivo. El comercial los verá en Adjuntos y en el correo."
+                persistent-hint
+                variant="outlined"
+                density="comfortable"
+                multiple
+                show-size
+                :disabled="cotizarSaving"
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv"
+                prepend-icon=""
+              >
+                <template #prepend-inner>
+                  <Icon name="mdi:paperclip" />
+                </template>
+              </v-file-input>
+              <p v-if="cotizarAdjuntoError" class="text-error text-body-2 mt-2 mb-0">{{ cotizarAdjuntoError }}</p>
+
+              <div v-if="cotizarAdjuntos.length" class="mt-3 d-flex ga-2 flex-wrap">
+                <v-chip
+                  v-for="(f, i) in cotizarAdjuntos"
+                  :key="`${f.name}-${f.size}-${i}`"
+                  variant="tonal"
+                  closable
+                  @click:close="quitarCotizarAdjunto(i)"
+                >
+                  <Icon name="mdi:file" class="me-1" />
+                  {{ f.name }}
+                </v-chip>
+              </div>
+
+              <div class="d-flex justify-end ga-4 mt-4">
                 <v-chip variant="tonal">Total tarifa: € {{ totalTarifaDlg.toFixed(2) }}</v-chip>
                 <v-chip color="success" variant="tonal">
                   Total cotizado: € {{ totalCotizadoDlg.toFixed(2) }}
@@ -2952,8 +3059,8 @@ async function agregarLinea() {
 
             <v-card-actions>
               <v-spacer />
-              <v-btn variant="text" @click="showCotizar=false">Cancelar</v-btn>
-              <v-btn color="primary" :disabled="cotizarFaltan" @click="confirmarCotizacion">
+              <v-btn variant="text" :disabled="cotizarSaving" @click="showCotizar=false">Cancelar</v-btn>
+              <v-btn color="primary" :loading="cotizarSaving" :disabled="cotizarFaltan || cotizarSaving" @click="confirmarCotizacion">
                 <template #prepend><Icon name="mdi:check-decagram" class="me-2" /></template>
                 {{ modoRecotizar ? 'Confirmar recotización' : 'Confirmar cotización' }}
               </v-btn>
@@ -2970,7 +3077,7 @@ async function agregarLinea() {
             </v-card-title>
             <v-card-text>
               <v-alert type="warning" color="yellow" class="mb-4">
-                **Observaciones del Supervisor:** {{ cot.cotizadoObs || 'No hay observaciones' }}
+                <div class="detail-notice__body">**Observaciones del Supervisor:** {{ cot.cotizadoObs || 'No hay observaciones' }}</div>
               </v-alert>
               <v-table>
                 <thead>
@@ -4371,6 +4478,10 @@ async function agregarLinea() {
   margin: 0;
   font-size: 0.875rem;
   line-height: 1.5;
+}
+.detail-notice__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .detail-notice--warning {
   background: #fffbeb;

@@ -13,6 +13,15 @@ function ensureArray<T>(v: T | T[] | null | undefined): T[] {
   return Array.isArray(v) ? v : [v]
 }
 
+function observacionesHtml(text: unknown): string {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n/g, '<br>')
+}
+
 async function resolveComprasEmails(body: any): Promise<string[]> {
   const fromBody = [
     ...ensureArray(body?.destinatarios?.compras),
@@ -292,7 +301,7 @@ export default defineEventHandler(async (event) => {
     // totales y obs
     totalTarifa: totalTarifa.toFixed(2),
     totalCotizado: totalCotizado.toFixed(2),
-    observaciones: body?.observaciones || '',
+    observaciones: observacionesHtml(body?.observaciones),
     ahorroPct: totalTarifa ? (((totalTarifa - totalCotizado) / totalTarifa) * 100).toFixed(0) : '0',
     ahorro: (totalTarifa - totalCotizado).toFixed(2),
   })
@@ -324,7 +333,7 @@ export default defineEventHandler(async (event) => {
         estado,
         estadoLabel: estado === 'ganada' ? 'Ganada' : 'Perdida',
         itemsTable: itemsHtml,
-        observaciones: body?.observaciones || '',
+        observaciones: observacionesHtml(body?.observaciones),
         current_year: new Date().getFullYear(),
       });
 
